@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Communication/Transport/GenericTransport.hpp>
+#include <Transport/GenericTransport.hpp>
 
 #include <thread>
 #include <shared_mutex>

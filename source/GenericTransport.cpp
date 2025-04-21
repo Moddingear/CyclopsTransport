@@ -1,5 +1,5 @@
-#include "Communication/Transport/GenericTransport.hpp"
-#include <Communication/Transport/ConnectionToken.hpp>
+#include "Transport/GenericTransport.hpp"
+#include <Transport/ConnectionToken.hpp>
 
 #include <iostream>
 #include <sstream>

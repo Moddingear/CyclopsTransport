@@ -1,19 +1,19 @@
 #pragma once
 
-#include <Communication/Transport/GenericTransport.hpp>
+#include <Transport/GenericTransport.hpp>
 
 #include <shared_mutex>
 #include <vector>
 #include <map>
 #include <netinet/in.h>
 
-#include <Misc/Task.hpp>
+#include <Transport/Task.hpp>
 
 //TCP transport layer
 
 
 
-class TCPTransport : public GenericTransport
+class SCTPTransport : public GenericTransport
 {
 private:
 	struct TCPConnection
@@ -32,9 +32,9 @@ private:
 	std::map<std::shared_ptr<ConnectionToken>, TCPConnection> connections;
 public:
 
-	TCPTransport(bool inServer, std::string inIP, int inPort, std::string inInterface);
+	SCTPTransport(bool inServer, std::string inIP, int inPort, std::string inInterface);
 
-	virtual ~TCPTransport();
+	virtual ~SCTPTransport();
 
 private:
 	void CreateSocket();

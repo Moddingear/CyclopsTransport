@@ -1,5 +1,5 @@
-#include "Communication/Transport/TCPTransport.hpp"
-#include <Communication/Transport/ConnectionToken.hpp>
+#include "Transport/TCPTransport.hpp"
+#include <Transport/ConnectionToken.hpp>
 
 #include <iostream>
 #include <filesystem>
@@ -13,7 +13,7 @@
 #include <arpa/inet.h>
 
 #include <mutex>
-#include <thirdparty/thread-rename.hpp>
+#include <Transport/thread-rename.hpp>
 
 using namespace std;
 
