@@ -18,7 +18,6 @@ class SCTPTransport : public GenericTransport
 private:
 	struct SCTPConnection
 	{
-		int filedescriptor;
 		sockaddr_in address;
 		std::string name;
 	};
@@ -44,8 +43,6 @@ private:
 public:
 
 	virtual std::vector<std::shared_ptr<ConnectionToken>> GetClients() const override;
-
-	std::vector<std::shared_ptr<ConnectionToken>> AcceptNewConnections();
 
 protected:
 

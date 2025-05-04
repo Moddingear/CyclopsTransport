@@ -38,8 +38,6 @@ SCTPTransport::~SCTPTransport()
 	{
 		for (auto &connection : connections)
 		{
-			shutdown(connection.second.filedescriptor, SHUT_RDWR);
-			close(connection.second.filedescriptor);
 			connection.first->Disconnect();
 		}
 	}
@@ -120,7 +118,6 @@ bool SCTPTransport::Connect()
 		SCTPConnection connection;
 		connection.name = ip;
 		connection.address = serverAddress;
-		connection.filedescriptor = sockfd;
 		auto token = make_shared<ConnectionToken>(ip, this);
 		connections[token] = connection;
 		return true;
@@ -166,7 +163,7 @@ std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shar
 	{
 		return nullopt;
 	}
-	int fd;
+	struct sockaddr_in dest_addr;
 	{
 		shared_lock lock(listenmutex);
 		auto value = connections.find(token);
@@ -175,9 +172,21 @@ std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shar
 			cerr << "Token not found in connections while receiving !" << endl;
 			return nullopt;
 		}
-		fd = value->second.filedescriptor;
+		dest_addr = value->second.address;
 	}
-	int numreceived = recv(fd, buffer, maxlength, MSG_DONTWAIT);
+
+	struct iovec io_buf;
+	io_buf.iov_base = buffer;
+	io_buf.iov_len = maxlength;
+
+	struct msghdr msg;
+	memset(&msg, 0, sizeof(struct msghdr));
+	msg.msg_iov = &io_buf;
+	msg.msg_iovlen = 1;
+	msg.msg_name = &dest_addr;
+	msg.msg_namelen = sizeof(struct sockaddr_in);
+
+	int numreceived = recvmsg(sockfd, &msg, MSG_DONTWAIT);
 	if (numreceived <= 0)
 	{
 		if (numreceived == 0)
@@ -209,7 +218,7 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 	{
 		return false;
 	}
-	int fd = 0;
+	struct sockaddr_in dest_addr;
 	{
 		shared_lock lock(listenmutex);
 		auto value = connections.find(token);
@@ -218,9 +227,20 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 			cerr << "Token not found in connections while sending !" << endl;
 			return false;
 		}
-		fd = value->second.filedescriptor;
+		dest_addr = value->second.address;
 	}
-	int numsent = send(fd, buffer, length, MSG_NOSIGNAL);
+	struct iovec io_buf;
+    io_buf.iov_base = const_cast<void*>(buffer);
+    io_buf.iov_len = length;
+
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(struct msghdr));
+    msg.msg_iov = &io_buf;
+    msg.msg_iovlen = 1;
+    msg.msg_name = &dest_addr;
+    msg.msg_namelen = sizeof(struct sockaddr_in);
+
+	int numsent = sendmsg(sockfd, &msg, MSG_NOSIGNAL);
 	int errnocp = errno;
 	if (numsent == -1 && (errnocp != EAGAIN && errnocp != EWOULDBLOCK))
 	{
@@ -228,66 +248,6 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 		token->Disconnect();
 	}
 	return token->IsConnected();
-}
-
-
-vector<shared_ptr<ConnectionToken>> SCTPTransport::AcceptNewConnections()
-{
-	if (!Server)
-	{
-		return {};	
-	}
-	vector<shared_ptr<ConnectionToken>> newconnections;
-	CheckConnection();
-	while (1)
-	{
-		SCTPConnection connection;
-		socklen_t clientSize = sizeof(connection.address);
-		bzero(&connection.address, clientSize);
-		connection.filedescriptor = accept4(sockfd, (struct sockaddr *)&connection.address, &clientSize, 0);
-		if (connection.filedescriptor > 0)
-		{
-			char buffer[16];
-			inet_ntop(AF_INET, &connection.address.sin_addr, buffer, sizeof(buffer));
-			buffer[sizeof(buffer)-1] = 0;
-			connection.name = string(buffer, strlen(buffer));
-			cout << "SCTP Client connecting from " << connection.name << " fd=" << connection.filedescriptor << endl;
-			int num_connections_from_same_ip = 0;
-			{
-				shared_lock lock(listenmutex);
-				for (auto &already : connections)
-				{
-					if (already.second.name == connection.name)
-					{
-						num_connections_from_same_ip++;
-					}
-				}
-				if (num_connections_from_same_ip > 0)
-				{
-					cerr << "Warning: " << connection.name << " is already connected " << num_connections_from_same_ip << " times" << endl;
-				}
-			}
-			
-			unique_lock lock(listenmutex);
-			auto token = make_shared<ConnectionToken>(connection.name, this);
-			connections[token] = connection;
-			newconnections.push_back(token);
-		}
-		else 
-		{
-			switch (errno)
-			{
-			case EAGAIN:
-				return newconnections;
-			
-			default:
-				cerr << "SCTP Unhandled error on accept: " << strerror(errno) << endl;
-				break;
-			}
-			break;
-		}
-	}
-	return newconnections;
 }
 
 void SCTPTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
@@ -300,14 +260,13 @@ void SCTPTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
 		return;
 	}
 	
-	DeleteSocket(value->second.filedescriptor);
 	if (Server)
 	{
-		cout << "SCTP Client " << value->second.name << "@fd" << value->second.filedescriptor << " disconnected." <<endl;
+		cout << "SCTP Client " << value->second.name << " disconnected." <<endl;
 	}
 	else
 	{
-		cout << "SCTP Server " << value->second.name << "@fd" << value->second.filedescriptor << " disconnected." <<endl;
+		cout << "SCTP Server " << value->second.name << " disconnected." <<endl;
 		sockfd = -1; //in the case of the client, the sockfd is that of the root socket
 	}
 	connections.erase(value);
