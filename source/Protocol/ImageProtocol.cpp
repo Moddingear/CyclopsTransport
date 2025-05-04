@@ -39,21 +39,42 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 		cerr << "Missing broadcast client !" << endl;
 	}
 	
+	static const int max_slice_len = 200000;
+	int num_slices = length + sizeof(metadata) / max_slice_len;
+	if (length % max_slice_len > 0)
+	{
+		num_slices++;
+	}
 	
-	std::vector<uint8_t> message(length + sizeof(metadata) + sizeof(Header));
+	
+	std::vector<uint8_t> message(max_slice_len + sizeof(Header));
 	Header &head = *reinterpret_cast<Header*>(message.data());
 	memcpy(head.type, "IMAGE\0\0\0", sizeof(head.type));
 	head.version = PROTOCOL_VERSION;
-	memcpy(message.data() + sizeof(Header), &metadata, sizeof(metadata));
-	memcpy(message.data() +  sizeof(metadata) + sizeof(Header), buffer, length);
-	for (auto &&i : clients)
+	head.num_segments = num_slices;
+	uint8_t *readptr = reinterpret_cast<uint8_t*>(buffer);
+	uint8_t *readptr_end = readptr + length;
+	uint8_t *writeptr_end = message.data() + message.size();
+	for (auto &&client : clients)
 	{
-		if (i == BroadcastToken)
+		if (client == BroadcastToken)
 		{
 			continue;
 		}
-		
-		i->Send(message.data(), message.size());
+
+		for (head.segment_index = 0; head.segment_index < num_slices; head.segment_index++)
+		{
+			uint8_t *writeptr = message.data() + sizeof(Header);
+			if (head.segment_index == 0)
+			{
+				memcpy(message.data() + sizeof(Header), &metadata, sizeof(metadata));
+				writeptr += sizeof(metadata);
+			}
+			size_t write_len = min(writeptr_end - writeptr, readptr_end - readptr_end);
+			memcpy(writeptr, readptr, write_len);
+			writeptr += write_len;
+			client->Send(message.data(), message.size());
+		}
 	}
 }
 
@@ -87,7 +108,51 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 		cerr << "Unhandled packet type " << head.type << endl;
 		return nullopt;
 	}
-	Image im;
-	memcpy(&im, &recvbuffer[sizeof(Header)], recvlen.value()-sizeof(Header));
-	return im;
+	partial_packets[head.index][head.segment_index] = vector<uint8_t>(recvbuffer.begin()+sizeof(Header), recvbuffer.end());
+
+	if (partial_packets[head.index].size() == head.num_segments)
+	{
+		Image im;
+		auto &packets = partial_packets[head.index];
+		size_t acc_size = 0;
+		for (auto &&i : packets)
+		{
+			acc_size += i.second.size();
+		}
+		im.data.resize(acc_size-sizeof(ImageMetadata));
+		uint8_t *wrptr = im.data.data();
+		for (size_t segment_idx = 0; segment_idx < head.num_segments; segment_idx++)
+		{
+			auto key = packets.find(segment_idx);
+			if (key == packets.end())
+			{
+				cerr << "Missing partial packet " << segment_idx << " of " << head.num_segments << "!" << endl;
+				partial_packets.erase(head.index);
+				return nullopt;
+			}
+			
+			uint8_t *readptr = key->second.data();
+			uint8_t readlen = key->second.size();
+			if (segment_idx == 0)
+			{
+				if (readlen < sizeof(ImageMetadata))
+				{
+					cerr << "Packet 0 not big enough for image metadata !" <<endl;
+					partial_packets.erase(head.index);
+					return nullopt;
+				}
+				memcpy(&im.metadata, readptr, sizeof(ImageMetadata));
+				readptr += sizeof(ImageMetadata);
+				readlen -= sizeof(ImageMetadata);
+			}
+			
+			memcpy(wrptr, readptr, readlen);
+			wrptr += readlen;
+			
+		}
+		partial_packets.erase(head.index);
+		return im;
+	}
+
+	return nullopt;
 }

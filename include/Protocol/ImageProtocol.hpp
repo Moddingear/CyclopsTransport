@@ -10,7 +10,7 @@ class ImageProtocol
 private:
 	SCTPTransport transport;
 	std::shared_ptr<ConnectionToken> BroadcastToken;
-	
+	std::map<uint16_t, std::map<uint16_t, std::vector<uint8_t>>> partial_packets;
 public:
 
 	enum class PacketTypes
@@ -25,6 +25,9 @@ public:
 	{
 		uint32_t version;
 		char type[8];
+		uint16_t num_segments;
+		uint16_t segment_index;
+		uint16_t index;
 	};
 
 	struct __attribute__((packed)) ImageMetadata

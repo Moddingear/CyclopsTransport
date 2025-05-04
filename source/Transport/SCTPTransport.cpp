@@ -101,11 +101,11 @@ bool SCTPTransport::Connect()
 	else
 	{
 		// communicates with listen
-		if(connect(sockfd, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) == -1)
+		/*if(connect(sockfd, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) == -1)
 		{
 			//cerr << "Failed to connect to server" << endl;
 			return false;
-		}
+		}*/
 		cout << "SCTP connected to server" << endl;
 		Connected = true;
 		SCTPConnection connection;
@@ -280,6 +280,12 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 	struct iovec io_buf;
     io_buf.iov_base = const_cast<void*>(buffer);
     io_buf.iov_len = length; //max 213000
+
+	if (io_buf.iov_len >= 212900)
+	{
+		cout << "SCTP Warning : Trying to send " << length << " bytes" << endl;
+	}
+	
 
     struct msghdr msg;
     memset(&msg, 0, sizeof(struct msghdr));
