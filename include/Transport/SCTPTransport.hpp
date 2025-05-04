@@ -5,6 +5,7 @@
 #include <shared_mutex>
 #include <vector>
 #include <map>
+#include <list>
 #include <netinet/in.h>
 
 #include <Transport/Task.hpp>
@@ -41,6 +42,8 @@ private:
 	void CheckConnection(); //create socket and connect if needed
 	void DeleteSocket(int fd); //free socket
 public:
+
+	std::shared_ptr<ConnectionToken> Connect(std::string address);
 
 	virtual std::vector<std::shared_ptr<ConnectionToken>> GetClients() const override;
 

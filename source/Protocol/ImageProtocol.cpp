@@ -10,6 +10,11 @@ using namespace std;
 ImageProtocol::ImageProtocol(std::string host)
 	:transport(host == "", host,  50668, "")
 {
+	if (host ==  "")
+	{
+		BroadcastToken = transport.Connect(GenericTransport::BroadcastClient);
+	}
+	
 }
 
 ImageProtocol::~ImageProtocol()
@@ -18,11 +23,23 @@ ImageProtocol::~ImageProtocol()
 
 void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadata)
 {
+
 	auto clients = transport.GetClients();
 	if (clients.size() == 0)
 	{
 		return;
 	}
+	if (BroadcastToken)
+	{
+		char recvbuffer[1024];
+		BroadcastToken->Receive(recvbuffer, sizeof(recvbuffer));
+	}
+	else
+	{
+		cerr << "Missing broadcast client !" << endl;
+	}
+	
+	
 	std::vector<uint8_t> message(length + sizeof(metadata) + sizeof(Header));
 	Header &head = *reinterpret_cast<Header*>(message.data());
 	memcpy(head.type, "IMAGE\0\0\0", sizeof(head.type));
@@ -31,6 +48,11 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	memcpy(message.data() +  sizeof(metadata) + sizeof(Header), buffer, length);
 	for (auto &&i : clients)
 	{
+		if (i == BroadcastToken)
+		{
+			continue;
+		}
+		
 		i->Send(message.data(), message.size());
 	}
 }

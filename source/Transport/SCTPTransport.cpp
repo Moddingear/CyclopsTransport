@@ -34,13 +34,6 @@ SCTPTransport::SCTPTransport(bool inServer, string inIP, int inPort, string inIn
 SCTPTransport::~SCTPTransport()
 {
 	cout << "Destroying SCTP transport " << IP << ":" << Port << " @ " << Interface <<endl;
-	if (Server)
-	{
-		for (auto &connection : connections)
-		{
-			connection.first->Disconnect();
-		}
-	}
 	if (sockfd != -1)
 	{
 		shutdown(sockfd, SHUT_RDWR);
@@ -141,6 +134,32 @@ void SCTPTransport::DeleteSocket(int fd)
 	close(fd);
 }
 
+std::shared_ptr<ConnectionToken> SCTPTransport::Connect(std::string address)
+{
+	sockaddr_in connectionaddress;
+	connectionaddress.sin_port = Port;
+	connectionaddress.sin_family = AF_INET;
+	if (address == BroadcastClient)
+	{
+		address = "0.0.0.0";
+	}
+	inet_pton(AF_INET, address.c_str(), &connectionaddress.sin_addr);
+
+	std::shared_ptr<ConnectionToken> token;
+	for (auto &&i : connections)
+	{
+		if (memcmp(&i.second.address.sin_addr, &connectionaddress.sin_addr, sizeof(connectionaddress.sin_addr)) == 0)
+		{
+			return i.first;
+		}
+	}
+	token = make_shared<ConnectionToken>(address, this);
+	SCTPConnection value;
+	value.address = connectionaddress;
+	connections[token] = value;
+	return token;
+}
+
 vector<shared_ptr<ConnectionToken>> SCTPTransport::GetClients() const
 {
 	vector<shared_ptr<ConnectionToken>> clients;
@@ -174,6 +193,8 @@ std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shar
 		}
 		dest_addr = value->second.address;
 	}
+	bool broadcast = dest_addr.sin_addr.s_addr == 0;
+	
 
 	struct iovec io_buf;
 	io_buf.iov_base = buffer;
@@ -187,6 +208,33 @@ std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shar
 	msg.msg_namelen = sizeof(struct sockaddr_in);
 
 	int numreceived = recvmsg(sockfd, &msg, MSG_DONTWAIT);
+
+	if (broadcast)
+	{
+		if (numreceived > 0)
+		{
+			char ipbuf[16];
+			inet_ntop(AF_INET, &dest_addr.sin_addr, ipbuf, sizeof(dest_addr));
+			bool found = false;
+			for (auto &&i : connections)
+			{
+				if (memcmp(&i.second.address.sin_addr, &dest_addr.sin_addr, sizeof(dest_addr.sin_addr)) == 0)
+				{
+					found = true;
+					//i.second.payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
+				}
+				
+			}
+			if (!found)
+			{
+				auto token = Connect(ipbuf);
+				//connections[token].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
+				cout << "SCTP Client connecting from " << ipbuf << endl;
+			}
+		}
+		
+	}
+	
 	if (numreceived <= 0)
 	{
 		if (numreceived == 0)
@@ -231,7 +279,7 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 	}
 	struct iovec io_buf;
     io_buf.iov_base = const_cast<void*>(buffer);
-    io_buf.iov_len = length;
+    io_buf.iov_len = length; //max 213000
 
     struct msghdr msg;
     memset(&msg, 0, sizeof(struct msghdr));
@@ -244,8 +292,20 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 	int errnocp = errno;
 	if (numsent == -1 && (errnocp != EAGAIN && errnocp != EWOULDBLOCK))
 	{
-		//got disconnected
-		token->Disconnect();
+		switch (errno)
+		{
+		case EAGAIN:
+		#if EAGAIN != EWOULDBLOCK
+		case EWOULDBLOCK:
+		#endif
+			break;
+		
+		default:
+			//got disconnected
+			token->Disconnect();
+			break;
+		}
+		
 	}
 	return token->IsConnected();
 }
@@ -262,11 +322,11 @@ void SCTPTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
 	
 	if (Server)
 	{
-		cout << "SCTP Client " << value->second.name << " disconnected." <<endl;
+		cout << "SCTP Client " << token->GetConnectionName() << " disconnected." <<endl;
 	}
 	else
 	{
-		cout << "SCTP Server " << value->second.name << " disconnected." <<endl;
+		cout << "SCTP Server " << token->GetConnectionName() << " disconnected." <<endl;
 		sockfd = -1; //in the case of the client, the sockfd is that of the root socket
 	}
 	connections.erase(value);

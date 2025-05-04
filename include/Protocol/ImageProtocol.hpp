@@ -9,6 +9,8 @@ class ImageProtocol
 {
 private:
 	SCTPTransport transport;
+	std::shared_ptr<ConnectionToken> BroadcastToken;
+	
 public:
 
 	enum class PacketTypes
