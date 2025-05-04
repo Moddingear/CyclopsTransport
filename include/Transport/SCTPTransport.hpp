@@ -16,7 +16,7 @@
 class SCTPTransport : public GenericTransport
 {
 private:
-	struct TCPConnection
+	struct SCTPConnection
 	{
 		int filedescriptor;
 		sockaddr_in address;
@@ -29,32 +29,26 @@ private:
 	int sockfd;
 	bool Connected;
 	mutable std::shared_mutex listenmutex; //protects connections
-	std::map<std::shared_ptr<ConnectionToken>, TCPConnection> connections;
+	std::map<std::shared_ptr<ConnectionToken>, SCTPConnection> connections;
 public:
 
 	SCTPTransport(bool inServer, std::string inIP, int inPort, std::string inInterface);
 
-	virtual ~SCTPTransport();
+	virtual ~SCTPTransport(); //frees all allocated sockets
 
 private:
-	void CreateSocket();
-	bool Connect();
-	void CheckConnection();
-	void LowerLatency(int fd);
-	void DeleteSocket(int fd);
+	void CreateSocket(); //create unix socket
+	bool Connect(); //attempt to connect to server
+	void CheckConnection(); //create socket and connect if needed
+	void DeleteSocket(int fd); //free socket
 public:
 
 	virtual std::vector<std::shared_ptr<ConnectionToken>> GetClients() const override;
 
-	virtual int Receive(void *buffer, int maxlength, std::string client, bool blocking=false) override;
-
-	virtual bool Send(const void* buffer, int length, std::string client) override;
-
-
-
 	std::vector<std::shared_ptr<ConnectionToken>> AcceptNewConnections();
 
 protected:
+
 	virtual std::optional<int> Receive(void* buffer, int maxlength, std::shared_ptr<ConnectionToken> token) override;
 
 	virtual bool Send(const void* buffer, int length,  std::shared_ptr<ConnectionToken> token) override;

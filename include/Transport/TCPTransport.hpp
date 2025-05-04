@@ -46,12 +46,6 @@ public:
 
 	virtual std::vector<std::shared_ptr<ConnectionToken>> GetClients() const override;
 
-	virtual int Receive(void *buffer, int maxlength, std::string client, bool blocking=false) override;
-
-	virtual bool Send(const void* buffer, int length, std::string client) override;
-
-
-
 	std::vector<std::shared_ptr<ConnectionToken>> AcceptNewConnections();
 
 protected:

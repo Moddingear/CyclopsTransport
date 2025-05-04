@@ -1,4 +1,4 @@
-#include "Transport/SCTPTransport.hpp"
+#include "Transport/TCPTransport.hpp"
 #include <Transport/ConnectionToken.hpp>
 
 #include <iostream>
@@ -17,7 +17,7 @@
 
 using namespace std;
 
-SCTPTransport::SCTPTransport(bool inServer, string inIP, int inPort, string inInterface)
+TCPTransport::TCPTransport(bool inServer, string inIP, int inPort, string inInterface)
 	: GenericTransport()
 {	
 	Server = inServer;
@@ -29,12 +29,12 @@ SCTPTransport::SCTPTransport(bool inServer, string inIP, int inPort, string inIn
 	CreateSocket();
 	Connect();
 
-	cout << "Created SCTP transport " << IP << ":" << Port << " @ " << Interface <<endl;
+	cout << "Created TCP transport " << IP << ":" << Port << " @ " << Interface <<endl;
 }
 
-SCTPTransport::~SCTPTransport()
+TCPTransport::~TCPTransport()
 {
-	cout << "Destroying SCTP transport " << IP << ":" << Port << " @ " << Interface <<endl;
+	cout << "Destroying TCP transport " << IP << ":" << Port << " @ " << Interface <<endl;
 	for (auto &connection : connections)
 	{
 		shutdown(connection.second.filedescriptor, SHUT_RDWR);
@@ -48,23 +48,23 @@ SCTPTransport::~SCTPTransport()
 	}
 }
 
-void SCTPTransport::CreateSocket()
+void TCPTransport::CreateSocket()
 {
 	if (sockfd != -1)
 	{
 		return;
 	}
-	int type = Server ? SOCK_SEQPACKET | SOCK_NONBLOCK : SOCK_SEQPACKET;
-	sockfd = socket(PF_INET, type, IPPROTO_SCTP);
+	int type = Server ? SOCK_STREAM | SOCK_NONBLOCK : SOCK_STREAM;
+	sockfd = socket(AF_INET, type, 0);
 	if (sockfd == -1)
 	{
 		cerr << "TCP Failed to create socket, port " << Port << endl;
 	}
 	
-	/*if(setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, Interface.c_str(), Interface.size()))
+	if(setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, Interface.c_str(), Interface.size()))
 	{
 		cerr << "TCP Failed to bind to interface : " << strerror(errno) << endl;
-	}*/
+	}
 
 	const int enable = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
@@ -79,7 +79,7 @@ void SCTPTransport::CreateSocket()
 	
 }
 
-bool SCTPTransport::Connect()
+bool TCPTransport::Connect()
 {
 	struct sockaddr_in serverAddress;
 	serverAddress.sin_family = AF_INET;
@@ -126,7 +126,7 @@ bool SCTPTransport::Connect()
 	}
 }
 
-void SCTPTransport::CheckConnection()
+void TCPTransport::CheckConnection()
 {
 	if (sockfd == -1)
 	{
@@ -138,7 +138,7 @@ void SCTPTransport::CheckConnection()
 	}
 }
 
-void SCTPTransport::LowerLatency(int fd)
+void TCPTransport::LowerLatency(int fd)
 {
 	int corking = 0;
 	if (setsockopt(fd, IPPROTO_TCP, TCP_CORK, &corking, sizeof(corking)))
@@ -152,12 +152,12 @@ void SCTPTransport::LowerLatency(int fd)
 	}
 }
 
-void SCTPTransport::DeleteSocket(int fd)
+void TCPTransport::DeleteSocket(int fd)
 {
 	close(fd);
 }
 
-vector<shared_ptr<ConnectionToken>> SCTPTransport::GetClients() const
+vector<shared_ptr<ConnectionToken>> TCPTransport::GetClients() const
 {
 	vector<shared_ptr<ConnectionToken>> clients;
 	shared_lock lock(listenmutex);
@@ -169,132 +169,7 @@ vector<shared_ptr<ConnectionToken>> SCTPTransport::GetClients() const
 	return clients;
 }
 
-int SCTPTransport::Receive(void *buffer, int maxlength, string client, bool blocking)
-{
-	int n = -1;
-	//memset(buffer, '0' , maxlength);
-	int flags = blocking && (client != GenericTransport::BroadcastClient) ? 0 : MSG_DONTWAIT;
-
-	if (Server)
-	{
-		set<shared_ptr<ConnectionToken>> DisconnectedClients;
-		{
-			shared_lock lock(listenmutex);
-			for (auto &connection : connections)
-			{
-				if (client != connection.second.name && client != BroadcastClient)
-				{
-					continue;
-				}
-				//errno = 0;
-				n = recv(connection.second.filedescriptor, buffer, maxlength, flags);
-				if (n == 0)
-				{
-					DisconnectedClients.emplace(connection.first);
-				} 
-				else if (n < 0) 
-				{
-					continue;
-				}
-				return n;
-			}
-		}
-		for (auto & client : DisconnectedClients) //Disconnection must be done outside of loop because the listenmutex is taken
-		{
-			DisconnectClient(client);
-		}
-	}
-	else
-	{
-		//errno = 0;
-		n = recv(sockfd, buffer, maxlength, flags);
-		if (n > 0)
-		{
-			return n;
-		}
-		
-	}
-	return -1;
-}
-
-bool SCTPTransport::Send(const void* buffer, int length, string client)
-{
-	if (!Connected)
-	{
-		return false;
-	}
-	//cout << "Sending " << length << " bytes..." << endl;
-	//printBuffer(buffer, length);
-	/*if (length > 1000)
-	{
-		cerr << "WARNING : Packet length over 1000, packet may be dropped" << endl;
-	}*/
-
-	if (Server)
-	{
-		set<shared_ptr<ConnectionToken>> DisconnectedClients;
-		bool sentsomething = false;
-		{
-			shared_lock lock(listenmutex);
-			for (auto &connection : connections)
-			{
-				if (client != connection.second.name && client != BroadcastClient)
-				{
-					continue;
-				}
-				int err = send(connection.second.filedescriptor, buffer, length, MSG_NOSIGNAL);
-				int errnocp = errno;
-				if (err ==-1 && (errnocp != EAGAIN && errnocp != EWOULDBLOCK))
-				{
-					if (errnocp == EPIPE)
-					{
-						DisconnectedClients.emplace(connection.first);
-					}
-					else
-					{
-						cerr << "TCP Server failed to send data to client " << connection.second.name << " : " << errnocp << " (" << strerror(errnocp) << ")" << endl;
-					}
-				}
-				else
-				{
-					sentsomething = true;
-				}
-			}
-		}
-		for (auto & client : DisconnectedClients) //Disconnection must be done outside of loop because the listenmutex is taken
-		{
-			DisconnectClient(client);
-		}
-		
-		return sentsomething;
-	}
-	else
-	{
-		int err = send(sockfd, buffer, length, MSG_NOSIGNAL);
-		int errnocp = errno;
-		if (err ==-1 && (errnocp != EAGAIN && errnocp != EWOULDBLOCK))
-		{
-			if (errnocp == EPIPE)
-			{
-				cout << "TCP Server has disconnected" << endl;
-				DeleteSocket(sockfd);
-				sockfd = -1;
-				Connected = false;
-			}
-			else
-			{
-				cerr << "TCP Failed to send data : " << errnocp << "(" << strerror(errnocp) << ")" << endl;
-				return false;
-			}
-			
-		}
-		return true;
-	}
-}
-
-
-
-std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
+std::optional<int> TCPTransport::Receive(void* buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
 {
 	if (!CheckToken(token))
 	{
@@ -333,7 +208,7 @@ std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shar
 }
 
 
-bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<ConnectionToken> token)
+bool TCPTransport::Send(const void* buffer, int length,  std::shared_ptr<ConnectionToken> token)
 {
 	if (!CheckToken(token))
 	{
@@ -361,7 +236,7 @@ bool SCTPTransport::Send(const void* buffer, int length,  std::shared_ptr<Connec
 }
 
 
-vector<shared_ptr<ConnectionToken>> SCTPTransport::AcceptNewConnections()
+vector<shared_ptr<ConnectionToken>> TCPTransport::AcceptNewConnections()
 {
 	if (!Server)
 	{
@@ -421,7 +296,7 @@ vector<shared_ptr<ConnectionToken>> SCTPTransport::AcceptNewConnections()
 	return newconnections;
 }
 
-void SCTPTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
+void TCPTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
 {
 	unique_lock lock(listenmutex);
 	auto value = connections.find(token);
@@ -432,6 +307,15 @@ void SCTPTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
 	}
 	
 	DeleteSocket(value->second.filedescriptor);
-	cout << "TCP Client " << value->second.name << "@fd" << value->second.filedescriptor << " disconnected." <<endl;
+	if (Server)
+	{
+		cout << "TCP Client " << value->second.name << "@fd" << value->second.filedescriptor << " disconnected." <<endl;
+	}
+	else
+	{
+		cout << "TCP Server " << value->second.name << "@fd" << value->second.filedescriptor << " disconnected." <<endl;
+		sockfd = -1;
+	}
+	
 	connections.erase(value);
 }

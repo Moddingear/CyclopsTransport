@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <Transport/ConnectionToken.hpp>
 
 using namespace std;
 
@@ -54,7 +55,33 @@ UDPTransport::~UDPTransport()
 	}
 }
 
-bool UDPTransport::Send(const void *buffer, int length, std::string client)
+std::shared_ptr<ConnectionToken> UDPTransport::Connect(std::string address)
+{
+	sockaddr_in connectionaddress;
+	connectionaddress.sin_port = Port;
+	connectionaddress.sin_family = AF_INET;
+	if (address == BroadcastClient)
+	{
+		address = Interface.broadcast;
+	}
+	inet_pton(AF_INET, address.c_str(), &connectionaddress.sin_addr);
+
+	std::shared_ptr<ConnectionToken> token;
+	for (auto &&i : connections)
+	{
+		if (memcmp(&i.second.address.sin_addr, &connectionaddress.sin_addr, sizeof(connectionaddress.sin_addr)) == 0)
+		{
+			return i.first;
+		}
+	}
+	token = make_shared<ConnectionToken>(address, this);
+	UDPConnection value;
+	value.address = connectionaddress;
+	connections[token] = value;
+	return token;
+}
+
+bool UDPTransport::Send(const void *buffer, int length, std::shared_ptr<ConnectionToken> token)
 {
 	if (!Connected)
 	{
@@ -67,46 +94,74 @@ bool UDPTransport::Send(const void *buffer, int length, std::string client)
 	}
 	//cout << "Sending " << length << " bytes..." << endl;
 	//printBuffer(buffer, length);
-	shared_lock lock(listenmutex);
-	sockaddr_in connectionaddress;
-	connectionaddress.sin_port = Port;
-	connectionaddress.sin_family = AF_INET;
-	if (client == BroadcastClient)
+	auto key = connections.find(token);
+	if (key == connections.end())
 	{
-		client = Interface.broadcast;
+		return false;
 	}
-	inet_pton(AF_INET, client.c_str(), &connectionaddress.sin_addr);
+	const sockaddr_in &connectionaddress = key->second.address;
+	
+	shared_lock lock(listenmutex);
 	
 	int err = sendto(sockfd, buffer, length, 0, (struct sockaddr*)&connectionaddress, sizeof(sockaddr_in));
 	if (err==-1 && (errno != EAGAIN && errno != EWOULDBLOCK))
 	{
-		cerr << "UDP Server failed to send data to " << client << " : " << errno << "(" << strerror(errno) << ")" << endl;
+		cerr << "UDP Server failed to send data to " << token->GetConnectionName() << " : " << errno << "(" << strerror(errno) << ")" << endl;
 	}
 	return true;
 }
 
-int UDPTransport::Receive(void *buffer, int maxlength, string client, bool blocking)
+std::optional<int> UDPTransport::Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
 {
-	(void)blocking;
 
-	int n;
 	sockaddr_in connectionaddress;
 	socklen_t clientSize = sizeof(connectionaddress);
-	bzero(&connectionaddress, clientSize);
-	if (client == BroadcastClient)
-	{
-		client = "0.0.0.0";
-	}
-	inet_pton(AF_INET, client.c_str(), &connectionaddress.sin_addr);
-	if ((n = recvfrom(sockfd, buffer, maxlength, 0, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
+	int n;
+	std::vector<uint8_t> recvbuff(UINT16_MAX);
+	while ((n = recvfrom(sockfd, recvbuff.data(), recvbuff.size(), 0, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
 	{
 		char ipbuf[16];
 		inet_ntop(AF_INET, &connectionaddress.sin_addr, ipbuf, clientSize);
-		cout << "UDP Client connecting from " << ipbuf << endl;
-		return n;
-		
+		bool found = false;
+		for (auto &&i : connections)
+		{
+			if (memcmp(&i.second.address.sin_addr, &connectionaddress.sin_addr, sizeof(connectionaddress.sin_addr)) == 0)
+			{
+				found = true;
+				i.second.payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
+			}
+			
+		}
+		if (!found)
+		{
+			auto token = Connect(ipbuf);
+			connections[token].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
+			cout << "UDP Client connecting from " << ipbuf << endl;
+		}
 	}
-	return -1;
+
+	auto key = connections.find(token);
+	if (key == connections.end())
+	{
+		return false;
+	}
+	if (key->second.payloads.size() >0)
+	{
+		auto payload = key->second.payloads.front();
+		n = payload.size();
+		if (payload.size() > maxlength)
+		{
+			cerr << "Not enough space in buffer to output UDP payload"  << endl;
+			return -1;
+		}
+		memcpy(buffer, payload.data(), payload.size());
+		key->second.payloads.pop_front();
+		return n;
+	}
+	else
+	{
+		return nullopt;
+	}
 }
 	
 void UDPTransport::receiveThread()
@@ -125,21 +180,20 @@ void UDPTransport::receiveThread()
 		while ((n = recvfrom(sockfd, dataReceived, sizeof(dataReceived)-1, 0, (struct sockaddr*)&client, &clientSize)) > 0)
 		{
 			bool found = false;
-			for (size_t i = 0; i < connectionaddresses.size(); i++)
+			for (auto &&i : connections)
 			{
-				if (connectionaddresses[i].sin_addr.s_addr == client.sin_addr.s_addr)
+				if (memcmp(&i.second.address.sin_addr, &client.sin_addr, sizeof(client.sin_addr)) == 0)
 				{
 					found = true;
 					break;
 				}
-				
 			}
 			if (!found)
 			{
-				connectionaddresses.push_back(client);
 				char buffer[100];
 				inet_ntop(AF_INET, &client.sin_addr, buffer, clientSize);
 				cout << "UDP Client connecting from " << buffer << endl;
+				Connect(buffer);
 			}
 			dataReceived[n] = 0;
 				

@@ -28,16 +28,11 @@ public:
 
 	static void printBuffer(const void *buffer, int length);
 
+	//Get all connected clients
 	virtual std::vector<std::shared_ptr<ConnectionToken>> GetClients() const;
 
+	//Check the validity of a token. If disconnected, returns false.
 	bool CheckToken(const std::shared_ptr<ConnectionToken> &token);
-
-	//receive from clients
-	//return number of bytes read
-	virtual int Receive(void *buffer, int maxlength, std::string client, bool blocking=false);
-
-
-	virtual bool Send(const void* buffer, int length, std::string client);
 
 protected:
 	//receive data using token. No return value = disconnected

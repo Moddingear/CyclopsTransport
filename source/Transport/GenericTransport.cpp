@@ -78,41 +78,23 @@ bool GenericTransport::CheckToken(const std::shared_ptr<ConnectionToken> &token)
 	return true;
 }
 
-int GenericTransport::Receive(void *buffer, int maxlength, string client, bool blocking)
+optional<int> GenericTransport::Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
 {
 	(void)buffer;
 	(void)maxlength;
-	(void)client;
-	(void)blocking;
+	(void)token;
 	cerr << "Called receive on base transport class" << endl;
-	return -1;
-}
-
-bool GenericTransport::Send(const void* buffer, int length, string client)
-{
-	(void)buffer;
-	(void)length;
-	(void)client;
-	cerr << "Called Send on base transport class" << endl;
-	return false;
-}
-
-
-
-optional<int> GenericTransport::Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
-{
-	int numreceived = Receive(buffer, maxlength, token->GetConnectionName(), false);
-	if (numreceived == 0)
-	{
-		return nullopt;
-	}
-	return numreceived;
+	return nullopt;
 }
 
 
 bool GenericTransport::Send(const void* buffer, int length, std::shared_ptr<ConnectionToken> token)
 {
-	return Send(buffer, length, token->GetConnectionName());
+	(void)buffer;
+	(void)length;
+	(void)token;
+	cerr << "Called Send on base transport class" << endl;
+	return false;
 }
 
 void GenericTransport::DisconnectClient(std::shared_ptr<ConnectionToken> token)
