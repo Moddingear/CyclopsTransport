@@ -91,6 +91,11 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 	{
 		return nullopt;
 	}
+	if (recvlen.value() < sizeof(Header))
+	{
+		return nullopt;
+	}
+	
 	Header &head = *reinterpret_cast<Header*>(recvbuffer.data());
 	switch (head.version)
 	{
