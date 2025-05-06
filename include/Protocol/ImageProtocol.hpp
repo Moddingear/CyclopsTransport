@@ -13,6 +13,7 @@ private:
 	std::shared_ptr<ConnectionToken> BroadcastToken;
 	std::map<uint16_t, std::map<uint16_t, std::vector<uint8_t>>> partial_packets;
 	std::atomic<uint16_t> index_counter = 0;
+	std::vector<uint8_t> recvbuffer; //2MB
 public:
 
 	enum class PacketTypes
