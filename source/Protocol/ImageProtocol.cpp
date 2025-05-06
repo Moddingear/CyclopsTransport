@@ -70,7 +70,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 				memcpy(message.data() + sizeof(Header), &metadata, sizeof(metadata));
 				writeptr += sizeof(metadata);
 			}
-			size_t write_len = min(writeptr_end - writeptr, readptr_end - readptr_end);
+			size_t write_len = min(writeptr_end - writeptr, readptr_end - readptr);
 			memcpy(writeptr, readptr, write_len);
 			writeptr += write_len;
 			client->Send(message.data(), message.size());
