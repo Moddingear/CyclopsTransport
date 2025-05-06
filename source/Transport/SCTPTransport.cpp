@@ -73,6 +73,7 @@ void SCTPTransport::CreateSocket()
 bool SCTPTransport::Connect()
 {
 	struct sockaddr_in serverAddress;
+	memset(&serverAddress, 0, sizeof(serverAddress));
 	serverAddress.sin_family = AF_INET;
 	serverAddress.sin_port = htons(Port);
 
@@ -136,7 +137,8 @@ void SCTPTransport::DeleteSocket(int fd)
 std::shared_ptr<ConnectionToken> SCTPTransport::Connect(std::string address)
 {
 	sockaddr_in connectionaddress;
-	connectionaddress.sin_port = Port;
+	memset(&connectionaddress, 0, sizeof(connectionaddress));
+	connectionaddress.sin_port = htons(Port);
 	connectionaddress.sin_family = AF_INET;
 	if (address == BroadcastClient)
 	{

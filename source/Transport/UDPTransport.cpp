@@ -58,7 +58,7 @@ UDPTransport::~UDPTransport()
 std::shared_ptr<ConnectionToken> UDPTransport::Connect(std::string address)
 {
 	sockaddr_in connectionaddress;
-	connectionaddress.sin_port = Port;
+	connectionaddress.sin_port = htons(Port);
 	connectionaddress.sin_family = AF_INET;
 	if (address == BroadcastClient)
 	{
