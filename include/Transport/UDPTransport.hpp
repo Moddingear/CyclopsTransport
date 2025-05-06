@@ -34,6 +34,7 @@ public:
 	virtual ~UDPTransport();
 
 	std::shared_ptr<ConnectionToken> Connect(std::string address);
+	std::shared_ptr<ConnectionToken> Connect(sockaddr_in address);
 
 	//virtual std::vector<std::string> GetClients() const override;
 

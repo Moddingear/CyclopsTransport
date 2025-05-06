@@ -81,6 +81,26 @@ std::shared_ptr<ConnectionToken> UDPTransport::Connect(std::string address)
 	return token;
 }
 
+std::shared_ptr<ConnectionToken> UDPTransport::Connect(sockaddr_in address)
+{
+	char ipbuf[16];
+	inet_ntop(AF_INET, &address.sin_addr, ipbuf, sizeof(ipbuf));
+
+	std::shared_ptr<ConnectionToken> token;
+	for (auto &&i : connections)
+	{
+		if (memcmp(&i.second.address.sin_addr, &address.sin_addr, sizeof(address.sin_addr)) == 0)
+		{
+			return i.first;
+		}
+	}
+	token = make_shared<ConnectionToken>(string(ipbuf), this);
+	UDPConnection value;
+	value.address = address;
+	connections[token] = value;
+	return token;
+}
+
 bool UDPTransport::Send(const void *buffer, int length, std::shared_ptr<ConnectionToken> token)
 {
 	if (!Connected)
@@ -190,10 +210,10 @@ void UDPTransport::receiveThread()
 			}
 			if (!found)
 			{
-				char buffer[100];
-				inet_ntop(AF_INET, &client.sin_addr, buffer, clientSize);
+				char buffer[16];
+				inet_ntop(AF_INET, &client.sin_addr, buffer, sizeof(buffer));
 				cout << "UDP Client connecting from " << buffer << endl;
-				Connect(buffer);
+				Connect(client);
 			}
 			dataReceived[n] = 0;
 				

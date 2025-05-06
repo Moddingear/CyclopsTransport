@@ -44,6 +44,7 @@ private:
 public:
 
 	std::shared_ptr<ConnectionToken> Connect(std::string address);
+	std::shared_ptr<ConnectionToken> Connect(sockaddr_in address);
 
 	virtual std::vector<std::shared_ptr<ConnectionToken>> GetClients() const override;
 

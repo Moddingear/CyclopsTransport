@@ -161,6 +161,26 @@ std::shared_ptr<ConnectionToken> SCTPTransport::Connect(std::string address)
 	return token;
 }
 
+std::shared_ptr<ConnectionToken> SCTPTransport::Connect(sockaddr_in address)
+{
+	char ipbuf[16];
+	inet_ntop(AF_INET, &address.sin_addr, ipbuf, sizeof(ipbuf));
+
+	std::shared_ptr<ConnectionToken> token;
+	for (auto &&i : connections)
+	{
+		if (memcmp(&i.second.address.sin_addr, &address.sin_addr, sizeof(address.sin_addr)) == 0)
+		{
+			return i.first;
+		}
+	}
+	token = make_shared<ConnectionToken>(string(ipbuf), this);
+	SCTPConnection value;
+	value.address = address;
+	connections[token] = value;
+	return token;
+}
+
 vector<shared_ptr<ConnectionToken>> SCTPTransport::GetClients() const
 {
 	vector<shared_ptr<ConnectionToken>> clients;
@@ -228,7 +248,7 @@ std::optional<int> SCTPTransport::Receive(void* buffer, int maxlength, std::shar
 			}
 			if (!found)
 			{
-				auto token = Connect(ipbuf);
+				auto token = Connect(dest_addr);
 				//connections[token].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
 				cout << "SCTP Client connecting from " << ipbuf << endl;
 			}
