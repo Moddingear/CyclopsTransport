@@ -101,11 +101,11 @@ bool SCTPTransport::Connect()
 	else
 	{
 		// communicates with listen
-		/*if(connect(sockfd, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) == -1)
+		if(connect(sockfd, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) == -1)
 		{
-			//cerr << "Failed to connect to server" << endl;
+			cerr << "Failed to connect to server" << endl;
 			return false;
-		}*/
+		}
 		cout << "SCTP connected to server" << endl;
 		Connected = true;
 		SCTPConnection connection;
