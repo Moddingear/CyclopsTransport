@@ -59,7 +59,7 @@ void SCTPTransport::CreateSocket()
 		cerr << "SCTP Failed to bind to interface : " << strerror(errno) << endl;
 	}*/
 
-	/*const int enable = 1;
+	const int enable = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
 	{
 		cerr << "setsockopt(SO_REUSEADDR) failed" << endl;
@@ -67,7 +67,7 @@ void SCTPTransport::CreateSocket()
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0)
 	{
 		cerr << "setsockopt(SO_REUSEPORT) failed" << endl;
-	}*/
+	}
 }
 
 bool SCTPTransport::Connect()
