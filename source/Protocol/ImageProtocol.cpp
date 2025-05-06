@@ -14,7 +14,6 @@ ImageProtocol::ImageProtocol(std::string host)
 	{
 		BroadcastToken = transport.Connect(GenericTransport::BroadcastClient);
 	}
-	
 }
 
 ImageProtocol::~ImageProtocol()
@@ -39,9 +38,10 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 		cerr << "Missing broadcast client !" << endl;
 	}
 	
-	static const int max_slice_len = 200000;
-	int num_slices = length + sizeof(metadata) / max_slice_len;
-	if (length % max_slice_len > 0)
+	static const int max_slice_len = 1024;
+	size_t total_send_length = length + sizeof(metadata);
+	int num_slices = total_send_length / max_slice_len;
+	if (total_send_length % max_slice_len > 0)
 	{
 		num_slices++;
 	}
