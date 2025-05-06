@@ -114,7 +114,7 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 		cerr << "Unhandled packet type " << head.type << endl;
 		return nullopt;
 	}
-	partial_packets[head.index][head.segment_index] = vector<uint8_t>(recvbuffer.begin()+sizeof(Header), recvbuffer.end());
+	partial_packets[head.index][head.segment_index] = vector<uint8_t>(recvbuffer.begin()+sizeof(Header), recvbuffer.begin()+recvlen.value()-sizeof(Header));
 
 	if (partial_packets[head.index].size() == head.num_segments)
 	{
