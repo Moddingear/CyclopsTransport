@@ -47,7 +47,7 @@ void SCTPTransport::CreateSocket()
 	{
 		return;
 	}
-	int type = Server ? SOCK_SEQPACKET | SOCK_NONBLOCK : SOCK_SEQPACKET;
+	int type = Server ? SOCK_SEQPACKET /*| SOCK_NONBLOCK*/ : SOCK_SEQPACKET;
 	sockfd = socket(PF_INET, type, IPPROTO_SCTP);
 	if (sockfd == -1)
 	{
