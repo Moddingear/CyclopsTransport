@@ -52,6 +52,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	memcpy(head.type, "IMAGE\0\0\0", sizeof(head.type));
 	head.version = PROTOCOL_VERSION;
 	head.num_segments = num_slices;
+	head.index = index_counter++;
 	uint8_t *readptr = reinterpret_cast<uint8_t*>(buffer);
 	uint8_t *readptr_end = readptr + length;
 	uint8_t *writeptr_end = message.data() + message.size();
@@ -72,7 +73,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 			}
 			size_t write_len = min(writeptr_end - writeptr, readptr_end - readptr);
 			memcpy(writeptr, readptr, write_len);
-			writeptr += write_len;
+			readptr += write_len;
 			client->Send(message.data(), message.size());
 		}
 	}
