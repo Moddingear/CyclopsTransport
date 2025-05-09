@@ -2,40 +2,106 @@
 #include <string.h>
 #include <Transport/ConnectionToken.hpp>
 #include <iostream>
+#include <array>
 
 using namespace std;
 
 #define PROTOCOL_VERSION 0
 
-ImageProtocol::ImageProtocol(std::string host)
-	:transport(50668, nullopt), recvbuffer(1<<21)
+const std::map<ImageProtocol::PacketTypes, std::string> ImageProtocol::TypeMap
 {
-	if (host !=  "")
+	{ImageProtocol::PacketTypes::None, ""},
+	{ImageProtocol::PacketTypes::Image, "IMAGE"},
+	{ImageProtocol::PacketTypes::Configuration, "CONFIGURATION"},
+	{ImageProtocol::PacketTypes::Status, "STATUS"},
+	{ImageProtocol::PacketTypes::Handshake, "HANDSHAKE"},
+	
+};
+
+ImageProtocol::ImageProtocol(bool InServer)
+	:server(InServer), transport(50668, nullopt), recvbuffer(1<<21)
+{
+	if (server)
 	{
-		BroadcastToken = transport.Connect(host);
+		BroadcastToken = transport.Connect(GenericTransport::BroadcastClient);
 	}
+	else
+	{
+	}
+	
 }
 
 ImageProtocol::~ImageProtocol()
 {
 }
 
-void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadata)
+ImageProtocol::PacketTypes ImageProtocol::GetPacketType(const char buffer[8])
 {
-
-	auto clients = transport.GetClients();
-	if (clients.size() == 0)
+	PacketTypes type = PacketTypes::None;
+	for (auto &&i : TypeMap)
 	{
-		return;
+		int length = std::min<size_t>(i.second.length(), 8); // sizeof(Header.type)
+		if (memcmp(i.second.data(), buffer, length) == 0)
+		{
+			type = i.first;
+		}
 	}
-	if (BroadcastToken)
+	return type;
+}
+
+ImageProtocol::Header::Header(PacketTypes InType)
+{
+	string TypeString = TypeMap.at(InType);
+	if (TypeString.size() > sizeof(type))
 	{
-		char recvbuffer[1024];
-		BroadcastToken->Receive(recvbuffer, sizeof(recvbuffer));
+		memcpy(type, TypeString.data(), sizeof(type));
 	}
 	else
 	{
-		cerr << "Missing broadcast client !" << endl;
+		memcpy(type, TypeString.data(), TypeString.size());
+		memset(type+TypeString.size(), 0, sizeof(type) - TypeString.size());
+	}
+	version = PROTOCOL_VERSION;
+}
+
+ImageProtocol::PacketTypes ImageProtocol::Header::GetPacketType() const
+{
+	return ImageProtocol::GetPacketType(type);
+}
+
+void ImageProtocol::Handshake(std::string host)
+{
+	if (server)
+	{
+		cout << "Can't send an handshake as server !" << endl;
+		return;
+	}
+	if (ServerToken && ServerToken->IsConnected())
+	{
+		cout << "Already connected !" << endl;
+	}
+	ServerToken = transport.Connect(host);
+
+	std::vector<uint8_t> message(sizeof(Header));
+	Header &head = *reinterpret_cast<Header*>(message.data());
+	head = Header(PacketTypes::Handshake);
+	head.num_segments = 1;
+	head.index = index_counter++;
+	ServerToken->Send(message.data(), message.size());
+}
+
+void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadata)
+{
+	if (!server)
+	{
+		cerr << "Client can't send images !" <<endl;
+		return;
+	}
+	auto clients = transport.GetClients();
+	if (clients.size() == 0)
+	{
+		ServerReceive();
+		return;
 	}
 	
 	static const int max_slice_len = 1024;
@@ -49,8 +115,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	
 	std::vector<uint8_t> message(max_slice_len + sizeof(Header));
 	Header &head = *reinterpret_cast<Header*>(message.data());
-	memcpy(head.type, "IMAGE\0\0\0", sizeof(head.type));
-	head.version = PROTOCOL_VERSION;
+	head = Header(PacketTypes::Image);
 	head.num_segments = num_slices;
 	head.index = index_counter++;
 	uint8_t *readptr = reinterpret_cast<uint8_t*>(buffer);
@@ -58,7 +123,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	uint8_t *writeptr_end = message.data() + message.size();
 	for (auto &&client : clients)
 	{
-		if (client == BroadcastToken)
+		if (client == ServerToken)
 		{
 			continue;
 		}
@@ -77,16 +142,67 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 			client->Send(message.data(), message.size());
 		}
 	}
+	ServerReceive();
+}
+
+void ImageProtocol::ServerReceive()
+{
+	std::array<uint8_t, 2048> message;
+	do
+	{
+		auto received = transport.ReceiveAny(message.data(), message.size());
+		if (received.second == nullptr)
+		{
+			break;
+		}
+		if (received.first < sizeof(Header))
+		{
+			cerr << "Packet too small for header, length " << received.first << endl;
+			continue;
+		}
+		Header &head = *reinterpret_cast<Header*>(message.data());
+		auto type = head.GetPacketType();
+		if (head.version != PROTOCOL_VERSION)
+		{
+			cerr << "Unknown Image Protocol version " << head.version << endl;
+			continue;
+		}
+		if (type == PacketTypes::None)
+		{
+			cerr << "Received an invalid packet type " << head.type << endl;
+			continue;
+		}
+		
+		switch (type)
+		{
+		case PacketTypes::Handshake :
+			cout << "Received handshake from " << received.second->GetConnectionName() << endl;
+			break;
+		
+		default:
+			cout << "Packet type not supported yet" << endl;
+			break;
+		}
+	} while (1);
+	
+	
+
 }
 
 std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 {
-	auto clients = transport.GetClients();
-	if (clients.size() != 1)
+	if (server)
 	{
+		cerr << "Server can't receive images !" <<endl;
 		return nullopt;
 	}
-	auto recvlen = clients[0]->Receive(recvbuffer.data(), recvbuffer.size());
+	if (!ServerToken || !ServerToken->IsConnected())
+	{
+		cerr << "Server token invalid !" << endl;
+		return nullopt;
+	}
+	
+	auto recvlen = ServerToken->Receive(recvbuffer.data(), recvbuffer.size());
 	if (!recvlen.has_value())
 	{
 		return nullopt;
@@ -107,14 +223,15 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 		cerr << "Unknown Image Protocol version " << head.version << endl;
 		return nullopt;
 	}
-
-	if (head.type != string("IMAGE"))
+	auto type = head.GetPacketType();
+	if (type != PacketTypes::Image)
 	{
 		cerr << "Unhandled packet type " << head.type << endl;
 		return nullopt;
 	}
 	partial_packets[head.index][head.segment_index] = vector<uint8_t>(recvbuffer.begin()+sizeof(Header), recvbuffer.begin()+recvlen.value()-sizeof(Header));
 
+	//maybe recompose the image if possible
 	if (partial_packets[head.index].size() == head.num_segments)
 	{
 		Image im;

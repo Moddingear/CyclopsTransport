@@ -145,55 +145,94 @@ bool UDPTransport::Send(const void *buffer, int length, std::shared_ptr<Connecti
 
 std::optional<int> UDPTransport::Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
 {
+	auto entry = connections.find(token);
+	if (entry == connections.end())
+	{
+		cerr << "UDP Receive : token unknown" << endl;
+	}
+	else if (entry->second.payloads.size() > 0)
+	{
+		auto payload = entry->second.payloads.front();
+		if (payload.size() > maxlength)
+		{
+			cerr << "UDP receive : Not enough space to evacuate past payload ! Truncating !" << endl;
+		}
+		size_t size = std::min<size_t>(payload.size(), maxlength);
+		memcpy(buffer, payload.data(), size);
+		entry->second.payloads.pop_front();
+		return size;
+	}
+	
+	
+	std::vector<uint8_t> recvbuff(UINT16_MAX);
+	std::pair<int, std::shared_ptr<ConnectionToken>> recv;
+	while ((recv=ReceiveFresh(recvbuff.data(), recvbuff.size())).first > 0)
+	{
+		if (recv.second == token)
+		{
+			memcpy(buffer, recvbuff.data(), recv.first);
+			return recv.first;
+		}
+		else
+		{
+			connections[recv.second].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + recv.first);
+		}
+	}
+	return nullopt;
+}
+
+std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveBacklog(void *buffer, int maxlength)
+{
+	for (auto &&i : connections)
+	{
+		if (i.second.payloads.size() > 0)
+		{
+			auto payload = i.second.payloads.front();
+			if (payload.size() > maxlength)
+			{
+				cerr << "UDP receive : Not enough space to evacuate past payload ! Truncating !" << endl;
+			}
+			size_t size = std::min<size_t>(payload.size(), maxlength);
+			memcpy(buffer, payload.data(), size);
+			i.second.payloads.pop_front();
+			return {size, i.first};
+		}
+	}
+	return {0, nullptr};
+}
+
+std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveFresh(void *buffer, int maxlength)
+{
 
 	sockaddr_in connectionaddress;
 	socklen_t clientSize = sizeof(connectionaddress);
 	int n;
-	std::vector<uint8_t> recvbuff(UINT16_MAX);
-	while ((n = recvfrom(sockfd, recvbuff.data(), recvbuff.size(), 0, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
+	if ((n = recvfrom(sockfd, buffer, maxlength, 0, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
 	{
-		char ipbuf[16];
-		inet_ntop(AF_INET, &connectionaddress.sin_addr, ipbuf, clientSize);
-		bool found = false;
 		for (auto &&i : connections)
 		{
 			if (memcmp(&i.second.address.sin_addr, &connectionaddress.sin_addr, sizeof(connectionaddress.sin_addr)) == 0)
 			{
-				found = true;
-				i.second.payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
+				return {n, i.first};
 			}
-			
 		}
-		if (!found)
-		{
-			auto token = Connect(ipbuf);
-			connections[token].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + n);
-			cout << "UDP Client connecting from " << ipbuf << endl;
-		}
+		char ipbuf[16];
+		inet_ntop(AF_INET, &connectionaddress.sin_addr, ipbuf, clientSize);
+		auto token = Connect(connectionaddress);
+		cout << "UDP Client connecting from " << ipbuf << endl;
+		return {n, token};
 	}
+	return {0, nullptr};
+}
 
-	auto key = connections.find(token);
-	if (key == connections.end())
+std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveAny(void *buffer, int maxlength)
+{
+	auto Backlog = ReceiveBacklog(buffer, maxlength);
+	if (Backlog.second != nullptr)
 	{
-		return false;
+		return Backlog;
 	}
-	if (key->second.payloads.size() >0)
-	{
-		auto payload = key->second.payloads.front();
-		n = payload.size();
-		if (payload.size() > maxlength)
-		{
-			cerr << "Not enough space in buffer to output UDP payload"  << endl;
-			return -1;
-		}
-		memcpy(buffer, payload.data(), payload.size());
-		key->second.payloads.pop_front();
-		return n;
-	}
-	else
-	{
-		return nullopt;
-	}
+	return ReceiveFresh(buffer, maxlength);
 }
 	
 void UDPTransport::receiveThread()

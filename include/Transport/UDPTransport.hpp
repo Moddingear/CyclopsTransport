@@ -39,6 +39,13 @@ public:
 
 	//virtual std::vector<std::string> GetClients() const override;
 
+	//Receive any data accumulated in the connections
+	std::pair<int, std::shared_ptr<ConnectionToken>> ReceiveBacklog(void *buffer, int maxlength);
+	//Receive data fresh from the socket
+	std::pair<int, std::shared_ptr<ConnectionToken>> ReceiveFresh(void *buffer, int maxlength);
+	//Receive old or new data, don't care
+	std::pair<int, std::shared_ptr<ConnectionToken>> ReceiveAny(void *buffer, int maxlength);
+
 	virtual std::optional<int> Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token) override;
 	
 	virtual bool Send(const void* buffer, int length, std::shared_ptr<ConnectionToken> token) override;
