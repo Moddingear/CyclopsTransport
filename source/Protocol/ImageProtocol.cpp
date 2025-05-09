@@ -8,11 +8,11 @@ using namespace std;
 #define PROTOCOL_VERSION 0
 
 ImageProtocol::ImageProtocol(std::string host)
-	:transport(host == "", host,  50668, ""), recvbuffer(1<<21)
+	:transport(50668, nullopt), recvbuffer(1<<21)
 {
-	if (host ==  "")
+	if (host !=  "")
 	{
-		BroadcastToken = transport.Connect(GenericTransport::BroadcastClient);
+		BroadcastToken = transport.Connect(host);
 	}
 }
 
@@ -38,7 +38,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 		cerr << "Missing broadcast client !" << endl;
 	}
 	
-	static const int max_slice_len = 200000;
+	static const int max_slice_len = 1024;
 	size_t total_send_length = length + sizeof(metadata);
 	int num_slices = total_send_length / max_slice_len;
 	if (total_send_length % max_slice_len > 0)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Transport/SCTPTransport.hpp>
+#include <Transport/UDPTransport.hpp>
 #include <string>
 #include <memory>
 #include <atomic>
@@ -9,7 +9,7 @@
 class ImageProtocol
 {
 private:
-	SCTPTransport transport;
+	UDPTransport transport;
 	std::shared_ptr<ConnectionToken> BroadcastToken;
 	std::map<uint16_t, std::map<uint16_t, std::vector<uint8_t>>> partial_packets;
 	std::atomic<uint16_t> index_counter = 0;

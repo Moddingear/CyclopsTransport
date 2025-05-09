@@ -15,7 +15,7 @@
 
 using namespace std;
 
-UDPTransport::UDPTransport(int inPort, NetworkInterface inInterface)
+UDPTransport::UDPTransport(int inPort, optional<NetworkInterface> inInterface)
 	:GenericTransport(),
 	Interface(inInterface), Port(inPort)
 {
@@ -25,9 +25,14 @@ UDPTransport::UDPTransport(int inPort, NetworkInterface inInterface)
 		cerr << "Failed to create socket, port " << Port << endl;
 	}
 
-	setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, Interface.name.c_str(), Interface.name.size() );
-	int broadcastEnable = 1;
-	setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable));
+	if (Interface.has_value())
+	{
+		setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, Interface.value().name.c_str(), Interface.value().name.size() );
+		int broadcastEnable = 1;
+		setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable));
+	}
+	
+	
 	struct sockaddr_in serverAddress;
 	serverAddress.sin_family = AF_INET;
 	serverAddress.sin_port = htons(Port);
@@ -62,7 +67,14 @@ std::shared_ptr<ConnectionToken> UDPTransport::Connect(std::string address)
 	connectionaddress.sin_family = AF_INET;
 	if (address == BroadcastClient)
 	{
-		address = Interface.broadcast;
+		if (Interface.has_value())
+		{
+			address = Interface.value().broadcast;
+		}
+		else
+		{
+			address = "0.0.0.0";
+		}
 	}
 	inet_pton(AF_INET, address.c_str(), &connectionaddress.sin_addr);
 

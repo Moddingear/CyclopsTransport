@@ -8,6 +8,7 @@
 #include <list>
 #include <map>
 #include <netinet/in.h>
+#include <optional>
 
 //UDP transport layer
 
@@ -20,7 +21,7 @@ private:
 		std::list<std::vector<uint8_t>> payloads;
 	};
 	
-	NetworkInterface Interface;
+	std::optional<NetworkInterface> Interface;
 	int Port;
 	int sockfd;
 	bool Connected;
@@ -29,7 +30,7 @@ private:
 	std::map<std::shared_ptr<ConnectionToken>, UDPConnection> connections;
 public:
 
-	UDPTransport(int inPort, NetworkInterface inInterface);
+	UDPTransport(int inPort, std::optional<NetworkInterface> inInterface);
 
 	virtual ~UDPTransport();
 
