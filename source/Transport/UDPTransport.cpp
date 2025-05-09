@@ -62,6 +62,7 @@ UDPTransport::~UDPTransport()
 
 std::shared_ptr<ConnectionToken> UDPTransport::Connect(std::string address)
 {
+	unique_lock lock(listenmutex);
 	sockaddr_in connectionaddress;
 	connectionaddress.sin_port = htons(Port);
 	connectionaddress.sin_family = AF_INET;
@@ -95,6 +96,7 @@ std::shared_ptr<ConnectionToken> UDPTransport::Connect(std::string address)
 
 std::shared_ptr<ConnectionToken> UDPTransport::Connect(sockaddr_in address)
 {
+	unique_lock lock(listenmutex);
 	char ipbuf[16];
 	inet_ntop(AF_INET, &address.sin_addr, ipbuf, sizeof(ipbuf));
 
@@ -111,6 +113,119 @@ std::shared_ptr<ConnectionToken> UDPTransport::Connect(sockaddr_in address)
 	value.address = address;
 	connections[token] = value;
 	return token;
+}
+
+std::vector<std::shared_ptr<ConnectionToken>> UDPTransport::GetClients() const
+{
+	vector<shared_ptr<ConnectionToken>> clients;
+	shared_lock lock(listenmutex);
+	clients.reserve(connections.size());
+	for (auto &connection : connections)
+	{
+		clients.push_back(connection.first);
+	}
+	return clients;
+}
+
+std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveBacklog(void *buffer, int maxlength)
+{
+	shared_lock lock(listenmutex);
+	for (auto &&i : connections)
+	{
+		if (i.second.payloads.size() > 0)
+		{
+			auto payload = i.second.payloads.front();
+			if (payload.size() > maxlength)
+			{
+				cerr << "UDP receive : Not enough space to evacuate past payload ! Truncating !" << endl;
+			}
+			size_t size = std::min<size_t>(payload.size(), maxlength);
+			memcpy(buffer, payload.data(), size);
+			i.second.payloads.pop_front();
+			return {size, i.first};
+		}
+	}
+	return {0, nullptr};
+}
+
+std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveFresh(void *buffer, int maxlength)
+{
+	shared_lock lock(listenmutex);
+	sockaddr_in connectionaddress;
+	socklen_t clientSize = sizeof(connectionaddress);
+	int n;
+	if ((n = recvfrom(sockfd, buffer, maxlength, MSG_DONTWAIT, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
+	{
+		for (auto &&i : connections)
+		{
+			if (memcmp(&i.second.address.sin_addr, &connectionaddress.sin_addr, sizeof(connectionaddress.sin_addr)) == 0)
+			{
+				return {n, i.first};
+			}
+		}
+		//release shared lock for an unique lock on connect
+		lock.unlock();
+		lock.release();
+		char ipbuf[16];
+		inet_ntop(AF_INET, &connectionaddress.sin_addr, ipbuf, clientSize);
+		auto token = Connect(connectionaddress);
+		cout << "UDP Client connecting from " << ipbuf << endl;
+		return {n, token};
+	}
+	return {0, nullptr};
+}
+
+std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveAny(void *buffer, int maxlength)
+{
+	auto Backlog = ReceiveBacklog(buffer, maxlength);
+	if (Backlog.second != nullptr)
+	{
+		return Backlog;
+	}
+	return ReceiveFresh(buffer, maxlength);
+}
+
+std::optional<int> UDPTransport::Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
+{
+	//try to dig stuff out of the backlog
+	{
+		shared_lock lock(listenmutex);
+		auto entry = connections.find(token);
+		if (entry == connections.end())
+		{
+			cerr << "UDP Receive : token unknown" << endl;
+		}
+		else if (entry->second.payloads.size() > 0)
+		{
+			auto payload = entry->second.payloads.front();
+			if (payload.size() > maxlength)
+			{
+				cerr << "UDP receive : Not enough space to evacuate past payload ! Truncating !" << endl;
+			}
+			size_t size = std::min<size_t>(payload.size(), maxlength);
+			memcpy(buffer, payload.data(), size);
+			entry->second.payloads.pop_front();
+			return size;
+		}
+	}
+	
+	
+	std::vector<uint8_t> recvbuff(UINT16_MAX);
+	std::pair<int, std::shared_ptr<ConnectionToken>> recv;
+	while ((recv=ReceiveFresh(recvbuff.data(), recvbuff.size())).first > 0)
+	{
+		if (recv.second == token)
+		{
+			memcpy(buffer, recvbuff.data(), recv.first);
+			return recv.first;
+		}
+		else
+		{
+			shared_lock lock(listenmutex);
+			connections[recv.second].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + recv.first);
+		}
+	}
+	return nullopt;
 }
 
 bool UDPTransport::Send(const void *buffer, int length, std::shared_ptr<ConnectionToken> token)
@@ -141,98 +256,6 @@ bool UDPTransport::Send(const void *buffer, int length, std::shared_ptr<Connecti
 		cerr << "UDP Server failed to send data to " << token->GetConnectionName() << " : " << errno << "(" << strerror(errno) << ")" << endl;
 	}
 	return true;
-}
-
-std::optional<int> UDPTransport::Receive(void *buffer, int maxlength, std::shared_ptr<ConnectionToken> token)
-{
-	auto entry = connections.find(token);
-	if (entry == connections.end())
-	{
-		cerr << "UDP Receive : token unknown" << endl;
-	}
-	else if (entry->second.payloads.size() > 0)
-	{
-		auto payload = entry->second.payloads.front();
-		if (payload.size() > maxlength)
-		{
-			cerr << "UDP receive : Not enough space to evacuate past payload ! Truncating !" << endl;
-		}
-		size_t size = std::min<size_t>(payload.size(), maxlength);
-		memcpy(buffer, payload.data(), size);
-		entry->second.payloads.pop_front();
-		return size;
-	}
-	
-	
-	std::vector<uint8_t> recvbuff(UINT16_MAX);
-	std::pair<int, std::shared_ptr<ConnectionToken>> recv;
-	while ((recv=ReceiveFresh(recvbuff.data(), recvbuff.size())).first > 0)
-	{
-		if (recv.second == token)
-		{
-			memcpy(buffer, recvbuff.data(), recv.first);
-			return recv.first;
-		}
-		else
-		{
-			connections[recv.second].payloads.emplace_back(recvbuff.begin(), recvbuff.begin() + recv.first);
-		}
-	}
-	return nullopt;
-}
-
-std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveBacklog(void *buffer, int maxlength)
-{
-	for (auto &&i : connections)
-	{
-		if (i.second.payloads.size() > 0)
-		{
-			auto payload = i.second.payloads.front();
-			if (payload.size() > maxlength)
-			{
-				cerr << "UDP receive : Not enough space to evacuate past payload ! Truncating !" << endl;
-			}
-			size_t size = std::min<size_t>(payload.size(), maxlength);
-			memcpy(buffer, payload.data(), size);
-			i.second.payloads.pop_front();
-			return {size, i.first};
-		}
-	}
-	return {0, nullptr};
-}
-
-std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveFresh(void *buffer, int maxlength)
-{
-
-	sockaddr_in connectionaddress;
-	socklen_t clientSize = sizeof(connectionaddress);
-	int n;
-	if ((n = recvfrom(sockfd, buffer, maxlength, MSG_DONTWAIT, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
-	{
-		for (auto &&i : connections)
-		{
-			if (memcmp(&i.second.address.sin_addr, &connectionaddress.sin_addr, sizeof(connectionaddress.sin_addr)) == 0)
-			{
-				return {n, i.first};
-			}
-		}
-		char ipbuf[16];
-		inet_ntop(AF_INET, &connectionaddress.sin_addr, ipbuf, clientSize);
-		auto token = Connect(connectionaddress);
-		cout << "UDP Client connecting from " << ipbuf << endl;
-		return {n, token};
-	}
-	return {0, nullptr};
-}
-
-std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveAny(void *buffer, int maxlength)
-{
-	auto Backlog = ReceiveBacklog(buffer, maxlength);
-	if (Backlog.second != nullptr)
-	{
-		return Backlog;
-	}
-	return ReceiveFresh(buffer, maxlength);
 }
 	
 void UDPTransport::receiveThread()
