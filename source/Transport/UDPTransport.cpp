@@ -207,7 +207,7 @@ std::pair<int, std::shared_ptr<ConnectionToken>> UDPTransport::ReceiveFresh(void
 	sockaddr_in connectionaddress;
 	socklen_t clientSize = sizeof(connectionaddress);
 	int n;
-	if ((n = recvfrom(sockfd, buffer, maxlength, 0, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
+	if ((n = recvfrom(sockfd, buffer, maxlength, MSG_DONTWAIT, (struct sockaddr*)&connectionaddress, &clientSize)) > 0)
 	{
 		for (auto &&i : connections)
 		{
