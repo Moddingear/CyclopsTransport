@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <steam/steamnetworkingsockets.h>
+#include <steam/isteamnetworkingsockets.h>
 #include <steam/isteamnetworkingutils.h>
 
 using namespace std;
@@ -51,9 +52,11 @@ ImageProtocol::ImageProtocol(std::string InServerIP)
 	
 	SteamNetworkingIPAddr ipaddr;
 	ipaddr.Clear();
-	SteamNetworkingConfigValue_t opt[2];
+	SteamNetworkingConfigValue_t opt[3];
 	opt[0].SetPtr( k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void*)SteamNetConnectionStatusChangedCallback );
-	opt[1].SetInt32( k_ESteamNetworkingConfig_SendBufferSize, 1280*850);
+	opt[1].SetInt32( k_ESteamNetworkingConfig_SendBufferSize, 1280*850*4);
+	opt[2].SetInt32( k_ESteamNetworkingConfig_RecvBufferSize, 1280*850*4);
+	opt[2].SetInt32( k_ESteamNetworkingConfig_Unencrypted, 3); //disable encryption
 	if (server_ip.size() == 0)
 	{
 		ipaddr.m_port = 50668;
@@ -164,7 +167,36 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	for (auto client : server_connections)
 	{
 		//socket->SendMessageToConnection(client, message.data(), message.size(), k_nSteamNetworkingSend_Unreliable, nullptr);
-		socket->SendMessageToConnection(client, buffer, length, k_nSteamNetworkingSend_Unreliable, nullptr);
+		EResult result = socket->SendMessageToConnection(client, buffer, length, k_nSteamNetworkingSend_Unreliable, nullptr);
+		/// - k_EResultInvalidParam: invalid connection handle, or the individual message is too big.
+		///   (See k_cbMaxSteamNetworkingSocketsMessageSizeSend)
+		/// - k_EResultInvalidState: connection is in an invalid state
+		/// - k_EResultNoConnection: connection has ended
+		/// - k_EResultIgnored: You used k_nSteamNetworkingSend_NoDelay, and the message was dropped because
+		///   we were not ready to send it.
+		/// - k_EResultLimitExceeded: there was already too much data queued to be sent.
+		///   (See k_ESteamNetworkingConfig_SendBufferSize)
+		switch (result)
+		{
+		case k_EResultInvalidParam:
+			cout << "Send Image Invalid param" << endl;
+			break;
+		case k_EResultInvalidState:
+			cout << "Send image invalid state" << endl;
+			break;
+		case k_EResultNoConnection:
+			cout << "Send image no connection" << endl;
+			break;
+		case k_EResultIgnored:
+			cout << "Send image ignored" << endl;
+			break;
+		case k_EResultLimitExceeded:
+			cout << "Send image limit exceeded" << endl;
+			break;
+
+		default:
+			break;
+		}
 	}
 	ServerReceive();
 }
