@@ -14,6 +14,7 @@ private:
 	UDPTransport transport;
 	std::shared_ptr<ConnectionToken> ServerToken, //Token to send data to server
 		BroadcastToken;
+
 	std::map<uint16_t, std::map<uint16_t, std::vector<uint8_t>>> partial_packets;
 	std::atomic<uint16_t> index_counter = 0;
 	std::vector<uint8_t> recvbuffer; //2MB, for unpacking images
@@ -32,6 +33,7 @@ private:
 	static const std::map<PacketTypes, std::string> TypeMap;
 
 public:
+
 	struct __attribute__((packed)) Header
 	{
 		uint32_t version;

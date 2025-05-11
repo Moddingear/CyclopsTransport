@@ -104,7 +104,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 		return;
 	}
 	
-	static const int max_slice_len = 1024;
+	static const int max_slice_len = metadata.width; //todo : better algo for that
 	size_t total_send_length = length + sizeof(metadata);
 	int num_slices = total_send_length / max_slice_len;
 	if (total_send_length % max_slice_len > 0)
@@ -113,7 +113,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	}
 	
 	
-	std::vector<uint8_t> message(max_slice_len + sizeof(Header));
+	std::vector<uint8_t> message(max_slice_len + sizeof(Header) + sizeof(metadata));
 	Header &head = *reinterpret_cast<Header*>(message.data());
 	head = Header(PacketTypes::Image);
 	head.num_segments = num_slices;
@@ -123,7 +123,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 	uint8_t *writeptr_end = message.data() + message.size();
 	for (auto &&client : clients)
 	{
-		if (client == ServerToken)
+		if (client == BroadcastToken)
 		{
 			continue;
 		}

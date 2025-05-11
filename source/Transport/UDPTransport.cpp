@@ -235,7 +235,7 @@ bool UDPTransport::Send(const void *buffer, int length, std::shared_ptr<Connecti
 		return false;
 	}
 
-	if (length > 1000)
+	if (length > 1500)
 	{
 		cerr << "WARNING : Packet length over 1000, packet may be dropped" << endl;
 	}
