@@ -12,3 +12,6 @@ add_library(CyclopsTransport STATIC ${CYCLOPS_SOURCES})
 target_include_directories(CyclopsTransport PUBLIC
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+
+target_link_libraries(CyclopsTransport
+	GameNetworkingSockets)

@@ -3,6 +3,10 @@
 #include <Transport/ConnectionToken.hpp>
 #include <iostream>
 #include <array>
+#include <algorithm>
+#include <cassert>
+#include <steam/steamnetworkingsockets.h>
+#include <steam/isteamnetworkingutils.h>
 
 using namespace std;
 
@@ -18,21 +22,65 @@ const std::map<ImageProtocol::PacketTypes, std::string> ImageProtocol::TypeMap
 	
 };
 
-ImageProtocol::ImageProtocol(bool InServer)
-	:server(InServer), transport(50668, nullopt), recvbuffer(1<<21)
+
+std::map<HSteamListenSocket, ImageProtocol*> ImageProtocol::port_owner;
+std::map<HSteamNetConnection, ImageProtocol*> ImageProtocol::connection_owner;
+
+
+
+ImageProtocol::ImageProtocol(std::string InServerIP)
+	:server_ip(InServerIP)
 {
-	if (server)
+	socket = SteamNetworkingSockets();
+	poll_group = socket->CreatePollGroup();
+	if (poll_group == k_HSteamNetPollGroup_Invalid)
 	{
-		BroadcastToken = transport.Connect(GenericTransport::BroadcastClient);
+		cerr << "Failed to create poll group !" << endl;
+	}
+	
+	SteamNetworkingIPAddr ipaddr;
+	ipaddr.Clear();
+	SteamNetworkingConfigValue_t opt[2];
+	opt[0].SetPtr( k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged, (void*)SteamNetConnectionStatusChangedCallback );
+	opt[1].SetInt32( k_ESteamNetworkingConfig_SendBufferSize, 1280*850);
+	if (server_ip.size() == 0)
+	{
+		ipaddr.m_port = 50668;
+		listener = socket->CreateListenSocketIP(ipaddr, sizeof(opt)/sizeof(opt[0]), opt);
+		if (listener == k_HSteamListenSocket_Invalid)
+		{
+			cerr << "Failed to create listen socket !" <<endl;
+		}
+		
+		port_owner[listener] = this;
 	}
 	else
 	{
+		ipaddr.ParseString(server_ip.c_str());
+		ipaddr.m_port = 50668;
+		client_connection = socket->ConnectByIPAddress(ipaddr, sizeof(opt)/sizeof(opt[0]), opt);
+		if (client_connection == k_HSteamNetConnection_Invalid)
+		{
+			cerr << "Failed to create connection !" <<endl;
+		}
+		
+		connection_owner[client_connection] = this;
 	}
 	
 }
 
 ImageProtocol::~ImageProtocol()
 {
+	if (listener != k_HSteamListenSocket_Invalid)
+	{
+		port_owner.erase(listener);
+		socket->CloseListenSocket(listener);
+	}
+	if (client_connection != k_HSteamNetConnection_Invalid)
+	{
+		connection_owner.erase(client_connection);
+		socket->CloseConnection(client_connection, k_ESteamNetConnectionEnd_AppException_Generic, "Disconnected", false);
+	}
 }
 
 ImageProtocol::PacketTypes ImageProtocol::GetPacketType(const char buffer[8])
@@ -69,120 +117,96 @@ ImageProtocol::PacketTypes ImageProtocol::Header::GetPacketType() const
 	return ImageProtocol::GetPacketType(type);
 }
 
-void ImageProtocol::Handshake(std::string host)
+void ImageProtocol::Handshake()
 {
-	if (server)
+	if (IsServer())
 	{
 		cout << "Can't send an handshake as server !" << endl;
 		return;
 	}
-	if (ServerToken && ServerToken->IsConnected())
-	{
-		cout << "Already connected !" << endl;
-	}
-	ServerToken = transport.Connect(host);
 
 	std::vector<uint8_t> message(sizeof(Header));
 	Header &head = *reinterpret_cast<Header*>(message.data());
 	head = Header(PacketTypes::Handshake);
-	head.num_segments = 1;
-	head.index = index_counter++;
-	ServerToken->Send(message.data(), message.size());
+	socket->SendMessageToConnection(client_connection, message.data(), message.size(), 0, nullptr);
 }
 
 void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadata)
 {
-	if (!server)
+	if (!IsServer())
 	{
 		cerr << "Client can't send images !" <<endl;
 		return;
 	}
-	auto clients = transport.GetClients();
-	if (clients.size() == 0)
+	if (server_connections.size() == 0)
 	{
 		ServerReceive();
 		return;
 	}
 	
-	static const int max_slice_len = metadata.width; //todo : better algo for that
-	size_t total_send_length = length + sizeof(metadata);
-	int num_slices = total_send_length / max_slice_len;
-	if (total_send_length % max_slice_len > 0)
-	{
-		num_slices++;
-	}
 	
-	
-	std::vector<uint8_t> message(max_slice_len + sizeof(Header) + sizeof(metadata));
-	Header &head = *reinterpret_cast<Header*>(message.data());
+	//std::array<uint8_t, sizeof(Header) + sizeof(metadata)> message;
+	Header &head = *reinterpret_cast<Header*>(buffer);
 	head = Header(PacketTypes::Image);
-	head.num_segments = num_slices;
-	head.index = index_counter++;
-	uint8_t *readptr = reinterpret_cast<uint8_t*>(buffer);
-	uint8_t *readptr_end = readptr + length;
-	uint8_t *writeptr_end = message.data() + message.size();
-	for (auto &&client : clients)
+	ImageMetadata &met = *reinterpret_cast<ImageMetadata*>(((uint8_t*)buffer) + sizeof(head));
+	met = metadata;
+	for (auto client : server_connections)
 	{
-		if (client == BroadcastToken)
-		{
-			continue;
-		}
-
-		for (head.segment_index = 0; head.segment_index < num_slices; head.segment_index++)
-		{
-			uint8_t *writeptr = message.data() + sizeof(Header);
-			if (head.segment_index == 0)
-			{
-				memcpy(message.data() + sizeof(Header), &metadata, sizeof(metadata));
-				writeptr += sizeof(metadata);
-			}
-			size_t write_len = min(writeptr_end - writeptr, readptr_end - readptr);
-			memcpy(writeptr, readptr, write_len);
-			readptr += write_len;
-			client->Send(message.data(), message.size());
-		}
+		//socket->SendMessageToConnection(client, message.data(), message.size(), k_nSteamNetworkingSend_Unreliable, nullptr);
+		socket->SendMessageToConnection(client, buffer, length, k_nSteamNetworkingSend_Unreliable, nullptr);
 	}
 	ServerReceive();
 }
 
 void ImageProtocol::ServerReceive()
 {
-	std::array<uint8_t, 2048> message;
+	socket->RunCallbacks();
+	SteamNetworkingMessage_t *message;
+
 	do
 	{
-		auto received = transport.ReceiveAny(message.data(), message.size());
-		if (received.second == nullptr)
+		int numreceived = socket->ReceiveMessagesOnPollGroup(poll_group, &message, 1);
+		//auto received = transport.ReceiveAny(message.data(), message.size());
+		if (numreceived == 0)
 		{
 			break;
 		}
-		if (received.first < sizeof(Header))
+		if (message->GetSize() < sizeof(Header))
 		{
-			cerr << "Packet too small for header, length " << received.first << endl;
-			continue;
+			cerr << "Packet too small for header, length " << message->GetSize() << endl;
+			message->Release();
+			break;
 		}
-		Header &head = *reinterpret_cast<Header*>(message.data());
+		const Header &head = *reinterpret_cast<const Header*>(message->GetData());
 		auto type = head.GetPacketType();
 		if (head.version != PROTOCOL_VERSION)
 		{
 			cerr << "Unknown Image Protocol version " << head.version << endl;
-			continue;
+			message->Release();
+			break;
 		}
 		if (type == PacketTypes::None)
 		{
 			cerr << "Received an invalid packet type " << head.type << endl;
-			continue;
+			message->Release();
+			break;
 		}
+		SteamNetConnectionInfo_t info;
+		char ipaddr[64];
+		socket->GetConnectionInfo(message->GetConnection(), &info);
+		info.m_addrRemote.ToString(ipaddr, sizeof(ipaddr), true);
 		
 		switch (type)
 		{
 		case PacketTypes::Handshake :
-			cout << "Received handshake from " << received.second->GetConnectionName() << endl;
+			cout << "Received handshake from " << ipaddr << endl;
 			break;
 		
 		default:
 			cout << "Packet type not supported yet" << endl;
 			break;
 		}
+		message->Release();
 	} while (1);
 	
 	
@@ -191,28 +215,19 @@ void ImageProtocol::ServerReceive()
 
 std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 {
-	if (server)
+	if (IsServer())
 	{
 		cerr << "Server can't receive images !" <<endl;
 		return nullopt;
 	}
-	if (!ServerToken || !ServerToken->IsConnected())
-	{
-		cerr << "Server token invalid !" << endl;
-		return nullopt;
-	}
-	
-	auto recvlen = ServerToken->Receive(recvbuffer.data(), recvbuffer.size());
-	if (!recvlen.has_value())
+	SteamNetworkingMessage_t *message;
+	int numreceived = socket->ReceiveMessagesOnConnection(client_connection, &message, 1);
+	if (numreceived == 0)
 	{
 		return nullopt;
 	}
-	if (recvlen.value() < sizeof(Header))
-	{
-		return nullopt;
-	}
-	
-	Header &head = *reinterpret_cast<Header*>(recvbuffer.data());
+	const uint8_t* data = reinterpret_cast<const uint8_t*>(message->GetData());
+	const Header &head = *reinterpret_cast<const Header*>(data);
 	switch (head.version)
 	{
 	case PROTOCOL_VERSION:
@@ -229,52 +244,153 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 		cerr << "Unhandled packet type " << head.type << endl;
 		return nullopt;
 	}
-	partial_packets[head.index][head.segment_index] = vector<uint8_t>(recvbuffer.begin()+sizeof(Header), recvbuffer.begin()+recvlen.value()-sizeof(Header));
 
-	//maybe recompose the image if possible
-	if (partial_packets[head.index].size() == head.num_segments)
+	Image im;
+	im.metadata = *reinterpret_cast<const ImageMetadata*>(data+sizeof(Header));
+	im.data = std::vector<uint8_t>(data, data+message->GetSize());
+	return im;
+}
+
+void ImageProtocol::SteamNetConnectionStatusChangedCallback( SteamNetConnectionStatusChangedCallback_t *pInfo )
+{
+	if (pInfo->m_info.m_hListenSocket != k_HSteamListenSocket_Invalid)
 	{
-		Image im;
-		auto &packets = partial_packets[head.index];
-		size_t acc_size = 0;
-		for (auto &&i : packets)
-		{
-			acc_size += i.second.size();
-		}
-		im.data.resize(acc_size-sizeof(ImageMetadata));
-		uint8_t *wrptr = im.data.data();
-		for (size_t segment_idx = 0; segment_idx < head.num_segments; segment_idx++)
-		{
-			auto key = packets.find(segment_idx);
-			if (key == packets.end())
-			{
-				cerr << "Missing partial packet " << segment_idx << " of " << head.num_segments << "!" << endl;
-				partial_packets.erase(head.index);
-				return nullopt;
-			}
-			
-			uint8_t *readptr = key->second.data();
-			uint8_t readlen = key->second.size();
-			if (segment_idx == 0)
-			{
-				if (readlen < sizeof(ImageMetadata))
-				{
-					cerr << "Packet 0 not big enough for image metadata !" <<endl;
-					partial_packets.erase(head.index);
-					return nullopt;
-				}
-				memcpy(&im.metadata, readptr, sizeof(ImageMetadata));
-				readptr += sizeof(ImageMetadata);
-				readlen -= sizeof(ImageMetadata);
-			}
-			
-			memcpy(wrptr, readptr, readlen);
-			wrptr += readlen;
-			
-		}
-		partial_packets.erase(head.index);
-		return im;
+		port_owner.at(pInfo->m_info.m_hListenSocket)->OnSteamNetConnectionStatusChanged(pInfo);
 	}
+	else
+	{
+		connection_owner.at(pInfo->m_hConn)->OnSteamNetConnectionStatusChanged(pInfo);
+	}
+}
 
-	return nullopt;
+void ImageProtocol::OnSteamNetConnectionStatusChanged( SteamNetConnectionStatusChangedCallback_t *pInfo )
+{
+	if (IsServer())
+	{
+		switch (pInfo->m_info.m_eState)
+		{
+		case k_ESteamNetworkingConnectionState_Connecting:
+			{
+				char ipbuf[64];
+				pInfo->m_info.m_addrRemote.ToString(ipbuf, sizeof(ipbuf), true);
+				socket->AcceptConnection(pInfo->m_hConn);
+
+				//set poll group
+				if( !socket->SetConnectionPollGroup(pInfo->m_hConn, poll_group))
+				{
+					socket->CloseConnection(pInfo->m_hConn, 0, nullptr, false);
+					cerr << "Failed to set poll group on " << ipbuf << endl;
+					break;
+				}
+
+				server_connections.push_back(pInfo->m_hConn);
+				cout << ipbuf << " just connected" << endl;
+			}
+			break;
+		case k_ESteamNetworkingConnectionState_None:
+			// NOTE: We will get callbacks here when we destroy connections.  You can ignore these.
+			break;
+		case k_ESteamNetworkingConnectionState_ClosedByPeer:
+		case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
+			{
+				// Ignore if they were not previously connected.  (If they disconnected
+				// before we accepted the connection.)
+				if ( pInfo->m_eOldState == k_ESteamNetworkingConnectionState_Connected )
+				{
+
+					// Locate the client.  Note that it should have been found, because this
+					// is the only codepath where we remove clients (except on shutdown),
+					// and connection change callbacks are dispatched in queue order.
+					auto itClient = std::find(server_connections.begin(), server_connections.end(), pInfo->m_hConn);
+					assert( itClient != server_connections.end() );
+
+					char ipbuf[64];
+					pInfo->m_info.m_addrRemote.ToString(ipbuf, sizeof(ipbuf), true);
+
+					if ( pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally )
+					{
+						cout << ipbuf << " disconnected dut to problem" <<endl;
+					}
+					else
+					{
+						cout << ipbuf << " disconnected by peer" <<endl;
+					}
+
+					server_connections.erase( itClient );
+				}
+				else
+				{
+					assert( pInfo->m_eOldState == k_ESteamNetworkingConnectionState_Connecting );
+				}
+
+				// Clean up the connection.  This is important!
+				// The connection is "closed" in the network sense, but
+				// it has not been destroyed.  We must close it on our end, too
+				// to finish up.  The reason information do not matter in this case,
+				// and we cannot linger because it's already closed on the other end,
+				// so we just pass 0's.
+				socket->CloseConnection( pInfo->m_hConn, 0, nullptr, false );
+				break;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	else
+	{
+		assert( pInfo->m_hConn == client_connection || client_connection == k_HSteamNetConnection_Invalid );
+		switch ( pInfo->m_info.m_eState )
+		{
+			case k_ESteamNetworkingConnectionState_None:
+				// NOTE: We will get callbacks here when we destroy connections.  You can ignore these.
+				break;
+
+			case k_ESteamNetworkingConnectionState_ClosedByPeer:
+			case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
+			{
+				// Print an appropriate message
+				if ( pInfo->m_eOldState == k_ESteamNetworkingConnectionState_Connecting )
+				{
+					// Note: we could distinguish between a timeout, a rejected connection,
+					// or some other transport problem.
+					cout << "We got rejected during connection" << endl;
+				}
+				else if ( pInfo->m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally )
+				{
+					cout << "Host lost" << endl;
+				}
+				else
+				{
+					// NOTE: We could check the reason code for a normal disconnection
+					cout << "Disconnected" << endl;
+				}
+
+				// Clean up the connection.  This is important!
+				// The connection is "closed" in the network sense, but
+				// it has not been destroyed.  We must close it on our end, too
+				// to finish up.  The reason information do not matter in this case,
+				// and we cannot linger because it's already closed on the other end,
+				// so we just pass 0's.
+				socket->CloseConnection( pInfo->m_hConn, 0, nullptr, false );
+				client_connection = k_HSteamNetConnection_Invalid;
+				break;
+			}
+
+			case k_ESteamNetworkingConnectionState_Connecting:
+				// We will get this callback when we start connecting.
+				// We can ignore this.
+				break;
+
+			case k_ESteamNetworkingConnectionState_Connected:
+				cout << "Connected to server OK" << endl;
+				socket->SetConnectionPollGroup(pInfo->m_hConn, poll_group);
+				break;
+
+			default:
+				// Silences -Wswitch
+				break;
+			
+		}
+	}
 }

@@ -10,14 +10,26 @@
 class ImageProtocol
 {
 private:
-	bool server;
-	UDPTransport transport;
-	std::shared_ptr<ConnectionToken> ServerToken, //Token to send data to server
-		BroadcastToken;
+	class ISteamNetworkingSockets *socket;
 
-	std::map<uint16_t, std::map<uint16_t, std::vector<uint8_t>>> partial_packets;
+	typedef uint32_t HSteamNetPollGroup;
+	typedef uint32_t HSteamListenSocket;
+	typedef uint32_t HSteamNetConnection;
+
+	HSteamNetPollGroup poll_group;
+
+	HSteamListenSocket listener = 0;
+	std::vector<HSteamNetConnection> server_connections;
+
+	std::string server_ip;
+	HSteamNetConnection client_connection = 0;
+
+	static std::map<HSteamListenSocket, ImageProtocol*> port_owner;
+	static std::map<HSteamNetConnection, ImageProtocol*> connection_owner;
+
 	std::atomic<uint16_t> index_counter = 0;
-	std::vector<uint8_t> recvbuffer; //2MB, for unpacking images
+
+	std::vector<struct SteamNetworkingMessage_t*> pending_messages;
 public:
 
 	enum class PacketTypes
@@ -38,9 +50,6 @@ public:
 	{
 		uint32_t version;
 		char type[8];
-		uint16_t num_segments;
-		uint16_t segment_index;
-		uint16_t index;
 
 		Header(PacketTypes type);
 		PacketTypes GetPacketType() const;
@@ -62,18 +71,27 @@ public:
 	
 	
 
-	ImageProtocol(bool InServer);
+	ImageProtocol(std::string InServerIP);
 	~ImageProtocol();
+
+	bool IsServer() const
+	{
+		return server_ip.size() == 0;
+	}
 
 	static PacketTypes GetPacketType(const char buffer[8]);
 
-	void Handshake(std::string host);
+	void Handshake();
 
 	void SendImage(void* buffer, size_t length, ImageMetadata metadata);
 
 	void ServerReceive();
 
 	std::optional<Image> ReceiveImage();
+
+private:
+	static void SteamNetConnectionStatusChangedCallback( struct SteamNetConnectionStatusChangedCallback_t *pInfo );
+	void OnSteamNetConnectionStatusChanged( struct SteamNetConnectionStatusChangedCallback_t *pInfo );
 };
 
 
