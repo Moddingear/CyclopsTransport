@@ -32,6 +32,17 @@ ImageProtocol::ImageProtocol(std::string InServerIP)
 	:server_ip(InServerIP)
 {
 	socket = SteamNetworkingSockets();
+	if (socket == nullptr)
+	{
+		SteamDatagramErrMsg errMsg;
+		if ( !GameNetworkingSockets_Init( nullptr, errMsg ) )
+		{
+			cerr << "GameNetworkingSockets_Init failed. " << errMsg <<endl;
+		}
+
+		SteamNetworkingUtils()->SetGlobalConfigValueInt32( k_ESteamNetworkingConfig_IP_AllowWithoutAuth, 1 );
+		socket = SteamNetworkingSockets();
+	}
 	poll_group = socket->CreatePollGroup();
 	if (poll_group == k_HSteamNetPollGroup_Invalid)
 	{

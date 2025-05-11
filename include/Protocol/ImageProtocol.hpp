@@ -10,7 +10,7 @@
 class ImageProtocol
 {
 private:
-	class ISteamNetworkingSockets *socket;
+	class ISteamNetworkingSockets *socket = nullptr;
 
 	typedef uint32_t HSteamNetPollGroup;
 	typedef uint32_t HSteamListenSocket;
