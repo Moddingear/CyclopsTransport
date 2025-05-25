@@ -5,9 +5,11 @@
 #include <array>
 #include <algorithm>
 #include <cassert>
+#if 0
 #include <steam/steamnetworkingsockets.h>
 #include <steam/isteamnetworkingsockets.h>
 #include <steam/isteamnetworkingutils.h>
+#endif
 
 using namespace std;
 
@@ -24,14 +26,16 @@ const std::map<ImageProtocol::PacketTypes, std::string> ImageProtocol::TypeMap
 };
 
 
+#if 0
 std::map<HSteamListenSocket, ImageProtocol*> ImageProtocol::port_owner;
 std::map<HSteamNetConnection, ImageProtocol*> ImageProtocol::connection_owner;
-
+#endif
 
 
 ImageProtocol::ImageProtocol(std::string InServerIP)
 	:server_ip(InServerIP)
 {
+	#if 0
 	socket = SteamNetworkingSockets();
 	if (socket == nullptr)
 	{
@@ -80,11 +84,12 @@ ImageProtocol::ImageProtocol(std::string InServerIP)
 		
 		connection_owner[client_connection] = this;
 	}
-	
+	#endif
 }
 
 ImageProtocol::~ImageProtocol()
 {
+	#if 0
 	if (listener != k_HSteamListenSocket_Invalid)
 	{
 		port_owner.erase(listener);
@@ -95,6 +100,7 @@ ImageProtocol::~ImageProtocol()
 		connection_owner.erase(client_connection);
 		socket->CloseConnection(client_connection, k_ESteamNetConnectionEnd_AppException_Generic, "Disconnected", false);
 	}
+	#endif
 }
 
 ImageProtocol::PacketTypes ImageProtocol::GetPacketType(const char buffer[8])
@@ -142,7 +148,9 @@ void ImageProtocol::Handshake()
 	std::vector<uint8_t> message(sizeof(Header));
 	Header &head = *reinterpret_cast<Header*>(message.data());
 	head = Header(PacketTypes::Handshake);
+	#if 0
 	socket->SendMessageToConnection(client_connection, message.data(), message.size(), 0, nullptr);
+	#endif
 }
 
 void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadata)
@@ -152,6 +160,7 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 		cerr << "Client can't send images !" <<endl;
 		return;
 	}
+	#if 0
 	if (server_connections.size() == 0)
 	{
 		ServerReceive();
@@ -198,11 +207,13 @@ void ImageProtocol::SendImage(void* buffer, size_t length, ImageMetadata metadat
 			break;
 		}
 	}
+	#endif
 	ServerReceive();
 }
 
 void ImageProtocol::ServerReceive()
 {
+	#if 0
 	socket->RunCallbacks();
 	SteamNetworkingMessage_t *message;
 
@@ -252,7 +263,7 @@ void ImageProtocol::ServerReceive()
 		message->Release();
 	} while (1);
 	
-	
+	#endif
 
 }
 
@@ -263,6 +274,7 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 		cerr << "Server can't receive images !" <<endl;
 		return nullopt;
 	}
+	#if 0
 	SteamNetworkingMessage_t *message;
 	int numreceived = socket->ReceiveMessagesOnConnection(client_connection, &message, 1);
 	if (numreceived == 0)
@@ -292,8 +304,12 @@ std::optional<ImageProtocol::Image> ImageProtocol::ReceiveImage()
 	im.metadata = *reinterpret_cast<const ImageMetadata*>(data+sizeof(Header));
 	im.data = std::vector<uint8_t>(data, data+message->GetSize());
 	return im;
+	#else
+	return nullopt;
+	#endif
 }
 
+#if 0
 void ImageProtocol::SteamNetConnectionStatusChangedCallback( SteamNetConnectionStatusChangedCallback_t *pInfo )
 {
 	if (pInfo->m_info.m_hListenSocket != k_HSteamListenSocket_Invalid)
@@ -437,3 +453,4 @@ void ImageProtocol::OnSteamNetConnectionStatusChanged( SteamNetConnectionStatusC
 		}
 	}
 }
+#endif

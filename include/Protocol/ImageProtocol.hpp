@@ -10,6 +10,8 @@
 class ImageProtocol
 {
 private:
+	std::string server_ip;
+#if 0
 	class ISteamNetworkingSockets *socket = nullptr;
 
 	typedef uint32_t HSteamNetPollGroup;
@@ -21,7 +23,6 @@ private:
 	HSteamListenSocket listener = 0;
 	std::vector<HSteamNetConnection> server_connections;
 
-	std::string server_ip;
 	HSteamNetConnection client_connection = 0;
 
 	static std::map<HSteamListenSocket, ImageProtocol*> port_owner;
@@ -30,6 +31,7 @@ private:
 	std::atomic<uint16_t> index_counter = 0;
 
 	std::vector<struct SteamNetworkingMessage_t*> pending_messages;
+#endif
 public:
 
 	enum class PacketTypes
@@ -90,8 +92,10 @@ public:
 	std::optional<Image> ReceiveImage();
 
 private:
+#if 0
 	static void SteamNetConnectionStatusChangedCallback( struct SteamNetConnectionStatusChangedCallback_t *pInfo );
 	void OnSteamNetConnectionStatusChanged( struct SteamNetConnectionStatusChangedCallback_t *pInfo );
+#endif
 };
 
 
