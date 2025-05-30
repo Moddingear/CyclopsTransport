@@ -61,9 +61,12 @@ void TCPTransport::CreateSocket()
 		cerr << "TCP Failed to create socket, port " << Port << endl;
 	}
 	
-	if(setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, Interface.c_str(), Interface.size()))
+	if (Interface.size())
 	{
-		cerr << "TCP Failed to bind to interface : " << strerror(errno) << endl;
+		if(setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, Interface.c_str(), Interface.size()))
+		{
+			cerr << "TCP Failed to bind to interface : " << strerror(errno) << endl;
+		}
 	}
 
 	const int enable = 1;
